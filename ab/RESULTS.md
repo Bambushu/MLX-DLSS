@@ -189,3 +189,15 @@ Smoke run (20 steps, plain L1 + hp L1): the stock net at scale 1 LOWERS PSNR vs 
 pixel losses on hallucinated texture regress to the mean. Loss changed to low-pass L1 + 0.5 hp
 L1 + 4.0 local high-pass ENERGY match (alignment-free texture amount). run1: 1500 steps, batch 2,
 lr 1.5e-5, ~2 s/step.
+
+### run2 data (Mike: "no krea2 stills") — 2026-09-05
+- FFHQ-1024 (gaunernst/ffhq-1024-wds) 12 shards = 12k real faces, LSDIR (danjacobellis) 10
+  parquet shards = 1745 images ≥768px, RealSR V3 (eval/calibration only). `scripts/fetch_datasets.py`,
+  data at ~/mlx-dlss-data (outside the repo).
+- FFHQ-1024 is NOT uniformly sharp: many are upscaled Flickr crops. Sharpness metric
+  (mean |L − blur1| on the centre 512) p50 1.44; `--min-sharp 1.6` keeps the pore-level ~45%
+  (2821 of 6000). LSDIR median 6.5, 99% pass.
+- Degradation calibrated on RealSR: real DSLR x2 pairs keep hp ratio 0.51 (x3: 0.33) of the
+  sharp image; the first synthetic degrade kept 0.73 (too mild). Now downscale 0.35-0.65 +
+  JPEG 25-55 + blur σ0.5-1.3 → 0.60 (p10 0.43, p90 0.76).
+- run2: dataset2 = 2821 FFHQ + 1745 LSDIR, 24 held out, 3000 steps, lr 1e-5, batch 2.

@@ -46,13 +46,15 @@ def load_image(path: Path) -> np.ndarray:
 
 
 def degrade(image: np.ndarray, rng: random.Random) -> np.ndarray:
-    """Soft-video proxy: downscale 0.5-0.8, resample back, JPEG q 28-60, blur sigma 0.4-1.0."""
+    """Soft-video proxy calibrated on RealSR (real DSLR x2/x3 pairs keep 0.51/0.33 of the sharp
+    image's high-pass energy; the first version of this kept 0.73): downscale 0.35-0.65, resample
+    back, JPEG q 25-55, blur sigma 0.5-1.3."""
     h, w = image.shape[:2]
     pil = Image.fromarray((image * 255 + 0.5).astype(np.uint8))
-    f = rng.uniform(0.5, 0.8)
+    f = rng.uniform(0.35, 0.65)
     pil = pil.resize((max(64, int(w * f)), max(64, int(h * f))), Image.LANCZOS).resize((w, h), rng.choice([Image.BILINEAR, Image.BICUBIC, Image.LANCZOS]))
-    buf = io.BytesIO(); pil.save(buf, "JPEG", quality=rng.randint(28, 60)); buf.seek(0)
-    pil = Image.open(buf).convert("RGB").filter(ImageFilter.GaussianBlur(rng.uniform(0.4, 1.0)))
+    buf = io.BytesIO(); pil.save(buf, "JPEG", quality=rng.randint(25, 55)); buf.seek(0)
+    pil = Image.open(buf).convert("RGB").filter(ImageFilter.GaussianBlur(rng.uniform(0.5, 1.3)))
     return np.asarray(pil).astype(np.float32) / 255
 
 
@@ -144,25 +146,79 @@ def save_weights(by_name: dict[str, torch.Tensor], original: Path, out: Path) ->
 
 # ----------------------------------------------------------------------------- commands
 
+def sharpness(path: Path) -> float:
+    """Mean |L - blur(1px)| on the centre 512 crop: FFHQ-1024 measures p50 1.44, soft upscaled
+    Flickr crops sit below ~1.0, pore-level skin above ~1.6."""
+    with Image.open(path) as im:
+        im = im.convert("L")
+        w, h = im.size; c = min(512, w, h)
+        im = im.crop(((w - c) // 2, (h - c) // 2, (w - c) // 2 + c, (h - c) // 2 + c))
+        a = np.asarray(im).astype(np.float32); b = np.asarray(im.filter(ImageFilter.GaussianBlur(1.0))).astype(np.float32)
+    return float(np.abs(a - b).mean())
+
+
 def cmd_build(args) -> int:
-    masker = SkinMasker(device=args.device)
+    """List sharp stills. ``DIR`` or ``DIR:CAP`` per source; ``--min-skin`` filters on a face-parsing
+    skin fraction (0 = keep everything, for general-content sets like LSDIR)."""
+    masker = SkinMasker(device=args.device) if args.min_skin > 0 else None
     keep = []
-    for directory in args.dirs:
-        for path in sorted(Path(directory).expanduser().rglob("*.png")):
-            if path.stat().st_size < 800_000:
-                continue
+    for spec in args.dirs:
+        directory, _, cap = spec.partition(":")
+        cap = int(cap) if cap else None
+        paths = sorted(p for p in Path(directory).expanduser().rglob("*") if p.suffix.lower() in (".png", ".webp", ".jpg", ".jpeg"))
+        rng = random.Random(7); rng.shuffle(paths)
+        taken = 0
+        for path in paths:
+            if cap is not None and taken >= cap:
+                break
             try:
-                image = load_image(path)
+                with Image.open(path) as im:
+                    w, h = im.size
             except Exception:
                 continue
-            if min(image.shape[:2]) < args.min_side:
+            if min(w, h) < args.min_side:
                 continue
-            frac = float(masker.skin(image).mean())
-            if frac >= args.min_skin:
-                keep.append(str(path)); print(f"keep {frac:.2f} {path}")
+            if args.min_sharp > 0 and sharpness(path) < args.min_sharp:
+                continue
+            if masker is not None:
+                frac = float(masker.skin(load_image(path)).mean())
+                if frac < args.min_skin:
+                    continue
+            keep.append(str(path)); taken += 1
+        print(f"{directory}: {taken} stills", flush=True)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text("\n".join(keep) + "\n")
     print(f"{len(keep)} stills -> {args.out}")
+    return 0
+
+
+def cmd_calibrate(args) -> int:
+    """Compare the synthetic degradation with REAL soft/sharp pairs (RealSR: LR and HR of the same
+    scene from one DSLR at two focal lengths). Reports PSNR and high-pass energy ratio soft/sharp
+    for both, so the degradation ranges can be tuned to match real optics."""
+    root = Path(args.realsr).expanduser()
+    scale = str(args.scale)
+    hrs = sorted(p for p in root.rglob("*_HR.png") if p.parent.name == scale)
+    rng = random.Random(3); rng.shuffle(hrs); hrs = hrs[: args.n]
+    if not hrs:
+        raise SystemExit(f"no */{scale}/*_HR.png under {root}")
+    real_psnr, real_ratio, syn_psnr, syn_ratio = [], [], [], []
+    for hr_path in hrs:
+        lr_path = hr_path.with_name(hr_path.name.replace("_HR.png", f"_LR{scale}.png"))
+        if not lr_path.exists():
+            continue
+        hr = load_image(hr_path); lr = load_image(lr_path)
+        if lr.shape != hr.shape:
+            lr = np.asarray(Image.fromarray((lr * 255 + 0.5).astype(np.uint8)).resize((hr.shape[1], hr.shape[0]), Image.BICUBIC)).astype(np.float32) / 255
+        h, w = hr.shape[:2]; c = min(512, h, w); y0 = (h - c) // 2; x0 = (w - c) // 2
+        hr_c = hr[y0:y0 + c, x0:x0 + c]; lr_c = lr[y0:y0 + c, x0:x0 + c]; syn_c = degrade(hr_c, rng)
+        hp = lambda a: float(highpass(torch.from_numpy(a)[None]).abs().mean())
+        ps = lambda a, b: 10 * np.log10(1 / max(float(np.mean((a - b) ** 2)), 1e-10))
+        real_psnr.append(ps(lr_c, hr_c)); real_ratio.append(hp(lr_c) / max(hp(hr_c), 1e-6))
+        syn_psnr.append(ps(syn_c, hr_c)); syn_ratio.append(hp(syn_c) / max(hp(hr_c), 1e-6))
+    print(f"pairs {len(real_psnr)}")
+    print(f"real  soft vs sharp: PSNR {np.mean(real_psnr):.2f} dB, hp ratio {np.mean(real_ratio):.2f} (p10 {np.percentile(real_ratio, 10):.2f}, p90 {np.percentile(real_ratio, 90):.2f})")
+    print(f"synth soft vs sharp: PSNR {np.mean(syn_psnr):.2f} dB, hp ratio {np.mean(syn_ratio):.2f} (p10 {np.percentile(syn_ratio, 10):.2f}, p90 {np.percentile(syn_ratio, 90):.2f})")
     return 0
 
 
@@ -241,6 +297,9 @@ def main() -> int:
     sub = p.add_subparsers(dest="command", required=True)
     b = sub.add_parser("build"); b.add_argument("dirs", nargs="+"); b.add_argument("--out", required=True)
     b.add_argument("--min-skin", type=float, default=0.05); b.add_argument("--min-side", type=int, default=768); b.add_argument("--device", default="mps")
+    b.add_argument("--min-sharp", type=float, default=0.0, help="drop stills whose centre-crop sharpness is below this (1.6 keeps the sharp ~40%% of FFHQ-1024)")
+    c = sub.add_parser("calibrate"); c.add_argument("--realsr", required=True); c.add_argument("--n", type=int, default=60)
+    c.add_argument("--scale", type=int, default=2, help="RealSR zoom factor folder to compare against (2 = mild optical softness, 4 = strong)")
     t = sub.add_parser("train"); t.add_argument("--dataset", required=True); t.add_argument("--weights", required=True); t.add_argument("--out", required=True)
     t.add_argument("--steps", type=int, default=1500); t.add_argument("--batch", type=int, default=2); t.add_argument("--crop", type=int, default=256)
     t.add_argument("--lr", type=float, default=2e-5); t.add_argument("--seed", type=int, default=0); t.add_argument("--holdout", type=int, default=12)
@@ -249,7 +308,7 @@ def main() -> int:
     e = sub.add_parser("eval"); e.add_argument("--dataset", required=True); e.add_argument("--weights", required=True); e.add_argument("--weights2", default=None)
     e.add_argument("--n", type=int, default=24); e.add_argument("--crop", type=int, default=256); e.add_argument("--holdout", type=int, default=12); e.add_argument("--device", default="mps")
     args = p.parse_args()
-    return {"build": cmd_build, "train": cmd_train, "eval": cmd_eval}[args.command](args)
+    return {"build": cmd_build, "train": cmd_train, "eval": cmd_eval, "calibrate": cmd_calibrate}[args.command](args)
 
 
 if __name__ == "__main__":
