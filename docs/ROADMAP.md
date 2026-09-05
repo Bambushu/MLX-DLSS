@@ -33,7 +33,7 @@ that decides whether it ships.
   no-reference sharpness + flicker ratio for the renderer, on H3 / Krea2 / real phone footage.
 - Gate: numbers published in RESULTS.md; decides whether 5 and 6 are worth doing.
 
-## 5. Real motion vectors + depth into frame generation  (1-2 weeks, research)
+## 5. Real motion vectors + depth into frame generation  (1-2 weeks, research) — SKIPPED (RIFE 4.26 already +1.1 dB; gate too steep)
 - The ported graph runs the vendor's MV dilation / depth splat / occlusion path but with zero
   MVs and flat depth, so it collapses to a 2-frame blend. Feed DIS optical flow as MVs and
   Depth-Anything-v2 as depth; occlusion weights and warped candidates become real.
@@ -41,7 +41,7 @@ that decides whether it ships.
   frames. Payoff is bounded: item 4 shows we are already at RIFE parity, so this ships only if
   it beats RIFE 4.26 by >0.5 dB on motion clips.
 
-## 6. Photoreal fine-tune of the renderer  (2-4 weeks, research)
+## 6. Photoreal fine-tune of the renderer  (2-4 weeks, research) — DONE in 1 day (graph trains as-is with STE; run3 = DINO perceptual; weights/dlssnr-ft-real-v1)
 - Weights are extracted to safetensors; the PyTorch reference graph is inference-only (no
   training loop, fused-attention approximations, FP8 rounding baked in). Needs: a trainable
   reimplementation of the window-attention blocks, a paired dataset (soft→sharp real video

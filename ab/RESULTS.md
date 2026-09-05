@@ -221,3 +221,24 @@ not structure; it plateaus at ~4.9 and then degrades. Pixel-loss-only training c
 no torchvision), plus low 1.0 / hp 0.5; lr 1e-5, 3000 steps, dataset2, from stock weights.
 ~2.3 s/step alone. Gate: RealSR PSNR must stay ≥ the soft input while hp climbs; H3 face judged
 by eye at 100%/2x.
+
+### run3 outcome — DINOv2 perceptual loss — DONE 2026-09-05
+| step | held-out PSNR (soft 31.15) | hp (soft 2.51, target 6.49) | RealSR real pair PSNR (LR 29.30, stock 27.72) |
+|---|---|---|---|
+| 500 | 31.14 | 4.53 | 29.37 |
+| 1500 | 31.32 | 4.40 | **29.39** |
+| 2000 | 31.27 | 4.67 | – |
+| 2500 | 31.02 | **5.25** | 28.72 |
+| 3000 | 31.35 | 4.80 | 28.93 |
+
+Gate passed: PSNR at/above the soft input while high-pass roughly doubles; no halos on real
+text (strip_run3_final.png). H3 face at 100%: lashes, brows, freckle edges crisp, skin clean at
+every checkpoint; 2500 has the most texture, 1500 the best fidelity.
+**Shipped as `weights/dlssnr-ft-real-v1.safetensors` (= step 1500) and
+`dlssnr-ft-real-v1-punchy.safetensors` (= step 2500)**; Metal package
+`weights/NeuralRendering-ft-real-v1.dlssmodel` (`mlxdlss-weights mlx`), Metal output within
+0.58/255 of torch. Temporal video (24 H3 frames, Metal): 4.5 fps, flicker ratio 1.04 vs stock 0.96
+(slight, no visible shimmer at 100%).
+On an already-sharp Krea2 still at the scale-2 recipe the fine-tune adds pores but reads slightly
+peppery (strip_run3_krea.png) — for sharp Krea2 stills keep the STOCK weights; the fine-tune is
+for soft sources (H3 / AI video / phone footage). Not measured: other H3 clips, non-face video.

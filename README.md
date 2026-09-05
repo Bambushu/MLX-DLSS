@@ -147,6 +147,16 @@ detail 2; drag the divider. Video: the converted clip plays in place, «Side by
 side» shows it next to the original. Jobs: every result with its download,
 the comparison clip and the folder.
 
+## Fine-tuned weights (this fork)
+
+`scripts/finetune.py` trains the recovered graph as-is (straight-through estimator on the E4M3
+rounding) on self-supervised soft→sharp pairs from real photographs (FFHQ-1024 filtered for
+sharpness + LSDIR; degradation calibrated on RealSR), loss = low-pass L1 + high-pass L1 + local
+high-pass energy + DINOv2 perceptual. `weights/dlssnr-ft-real-v1.safetensors` (and the
+`-punchy` variant) drop into every `--weights` flag and into `mlxdlss-weights mlx` for the Metal
+package. Use them on SOFT sources (AI video, phone footage) at processing scale 1; keep the stock
+weights for already-sharp stills. Numbers in `ab/RESULTS.md`.
+
 ## ComfyUI
 
 `comfyui/ComfyUI-MLX-DLSS` wraps both networks as nodes (renderer with the skin auto-mask,
