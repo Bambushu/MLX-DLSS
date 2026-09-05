@@ -127,3 +127,33 @@ auto-mask) = max abs diff 0; framegen node on cut12 = 1 cut, seam frame byte-equ
 (phase 0.5), generated frames within 0.86/255 of the crf-10 CLI file. Unit tests
 tests/test_comfyui_nodes.py (synthetic weights). Not yet loaded in a RUNNING ComfyUI — needs a
 restart of the :8288 instance; not done unilaterally.
+
+### validate.py framegen — 2026-09-05 18:57
+| clip | method | mean PSNR (dB) | worst | gen fps |
+|---|---|---|---|---|
+| src_faces | dlss | 38.06 | 20.58 | 71.9 |
+| src_faces | rife47 | 38.05 | 23.47 | 22.2 |
+| src_faces | rife426 | 38.27 | 22.90 | 21.3 |
+| src_faces | minterpolate | 38.00 | 21.17 | 7.5 |
+| src_yoga | dlss | 36.22 | 25.21 | 70.2 |
+| src_yoga | rife47 | 36.91 | 25.48 | 22.3 |
+| src_yoga | rife426 | 37.33 | 25.36 | 21.6 |
+| src_yoga | minterpolate | 36.77 | 24.59 | 7.4 |
+
+### validate.py renderer — 2026-09-05 19:01
+| variant | flicker ratio | hp skin | hp outside | s/frame |
+|---|---|---|---|---|
+| source | 1.00 | 2.57 | 1.55 | - |
+| temporal, c0.5 | 0.96 | 2.55 | 1.47 | 4.6 |
+| temporal, c0.5, auto-mask | 0.98 | 2.53 | 1.61 | 4.6 |
+
+## Roadmap item 4 — validation script — DONE 2026-09-05
+`scripts/validate.py framegen|renderer` (tables above, appended by the script). Protocol is now
+raw-frame PSNR (no h264 round trip), so absolute numbers are ~5 dB lower than the round-1
+ffmpeg-psnr numbers; rankings are what matter:
+- Frame gen: RIFE 4.26 > RIFE 4.7 ≈ DLSS on the face clip; on body motion RIFE 4.26 leads DLSS
+  by 1.1 dB. DLSS is ~3x faster than either RIFE. Item 5's gate (beat RIFE 4.26 by >0.5 dB) is
+  therefore a 1.6 dB climb on motion — steep.
+- Renderer on soft H3 video (24 frames, temporal): hp on skin unchanged (2.55 vs source 2.57) —
+  it adds NO skin detail on this source, only tone; the auto-mask keeps the outside texture
+  (1.61 vs 1.47 unmasked, source 1.55). Flicker ratio 0.96-0.98, no shimmer.

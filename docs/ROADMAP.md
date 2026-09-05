@@ -28,7 +28,7 @@ that decides whether it ships.
   (MPS local, CUDA on pods). Ships `example_workflows/` so nobody hand-builds a graph.
 - Gate: node output byte-equal to the CLI output on the same frame.
 
-## 4. Validation on real + AI footage  (1 day)
+## 4. Validation on real + AI footage  (1 day) — DONE (scripts/validate.py; RIFE 4.26 is the quality pick, DLSS the speed pick)
 - Extend `ab/` into a repeatable script: withheld-frame PSNR for FG (vs RIFE 4.7 and 4.26),
   no-reference sharpness + flicker ratio for the renderer, on H3 / Krea2 / real phone footage.
 - Gate: numbers published in RESULTS.md; decides whether 5 and 6 are worth doing.
