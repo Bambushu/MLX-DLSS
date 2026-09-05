@@ -13,3 +13,8 @@ python/build/
 
 # extracted proprietary weights (mlxdlss-weights output), never committed
 weights/
+ab/*.mp4
+ab/*.psnr
+ab/fr/
+weights/
+.venv/
