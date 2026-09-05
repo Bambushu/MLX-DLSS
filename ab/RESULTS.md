@@ -242,3 +242,18 @@ every checkpoint; 2500 has the most texture, 1500 the best fidelity.
 On an already-sharp Krea2 still at the scale-2 recipe the fine-tune adds pores but reads slightly
 peppery (strip_run3_krea.png) — for sharp Krea2 stills keep the STOCK weights; the fine-tune is
 for soft sources (H3 / AI video / phone footage). Not measured: other H3 clips, non-face video.
+
+### v1 on five more H3 clips (24 frames each, Metal temporal, 2026-09-05) — ab/v1test/
+| clip | content | hp skin src→stock→v1 | hp outside src→stock→v1 | static-pixel temporal diff src/stock/v1 | moving-pixel diff src/stock/v1 |
+|---|---|---|---|---|---|
+| mmh3 | rain-window portrait | 2.98→3.09→3.85 | 2.63→2.67→3.23 | 0.39/0.43/0.50 | 6.6/6.6/8.5 |
+| demo_v4 | glamour, jewellery | 4.82→4.59→6.12 | 6.29→6.03→7.43 | 0.26/0.41/0.41 | 8.9/8.2/11.0 |
+| loco | locomotive, no face | – | 6.25→6.42→7.74 | 0.41/0.75/0.52 | 9.3/6.7/9.9 |
+| golf | presenter, dark skin | 4.58→4.98→5.40 | 2.78→2.81→3.18 | 0.24/0.42/0.45 | 13.2/12.5/13.9 |
+| yoga | body, low light | – | 4.41→3.90→4.71 | 0.44/0.59/0.59 | 8.2/6.2/8.6 |
+
+v1 adds 20-30% high-pass detail on every clip (faces, jewellery, machinery, fabric) and keeps
+colour where stock greys/darkens. The raw flicker ratio (1.10-1.25) is NOT shimmer: in static
+pixels v1's temporal difference equals stock's (≤0.6/255); the extra comes from moving pixels,
+i.e. sharper detail travelling with the subject. Strips strip_*.png, side-by-side videos
+mmh3_sbs.mp4 / golf_sbs.mp4 (source | stock | v1).
