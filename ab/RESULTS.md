@@ -71,3 +71,18 @@ Phases .25/.5/.75 coherent, fingers mildly doubled at .25. Usable.
 upgrade on a sharp source, the opposite of the soft-H3 result. `--detail-strength 3 --colour 0`
 overcooks into orange-peel. `cinematic` = contrast + darker. Renderer wants a sharp input:
 run it AFTER upscale, not before, and on Krea2 stills directly.
+
+### Colour-strength sweep at scale 2 (Krea2 stills, sheet3_*.jpg) — 2026-09-05
+Mean skin RGB over the face crop:
+
+| still | input | c=0 | c=0.3 | c=0.5 | c=1 (default) |
+|---|---|---|---|---|---|
+| window_rain | 139 104 82 | 139 104 82 | 138 104 82 | 137 103 82 | 136 103 81 |
+| bedroom_golden | 127 89 62 | - | 125 87 60 | 124 86 59 | 121 84 57 |
+
+The colour term darkens/desaturates monotonically: ~2% at 0.5, ~5% at 1 on warm low-key
+scenes, less on daylight. Visually 0.3-0.5 keep the scene's warmth and still gain local tone
+contrast; 1.0 flattens golden-hour. Detail contribution is identical across the sweep.
+
+**Krea2 still recipe (current):** `--processing-scale 2 --detail-strength 1 --colour-strength 0.5`
+(0.3 for warm/low-key scenes; detail 2 for tight close-ups only). ~10 s/still on the M5.
