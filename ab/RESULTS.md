@@ -201,3 +201,23 @@ lr 1.5e-5, ~2 s/step.
   sharp image; the first synthetic degrade kept 0.73 (too mild). Now downscale 0.35-0.65 +
   JPEG 25-55 + blur σ0.5-1.3 → 0.60 (p10 0.43, p90 0.76).
 - run2: dataset2 = 2821 FFHQ + 1745 LSDIR, 24 held out, 3000 steps, lr 1e-5, batch 2.
+
+### run2 outcome (real photos, energy loss) — stopped at step 2000
+| step | PSNR out (soft 31.15) | hp out (soft 2.51, target 6.49) |
+|---|---|---|
+| 0 (stock) | 28.36 | 2.55 |
+| 500 | 30.65 | 4.51 |
+| 1000 | 30.15 | 4.97 |
+| 1500 | 29.92 | 4.85 |
+| 2000 | 27.34 | 4.63 |
+
+Visual (strip_run2_500/1500.png): on the H3 face the fine-tune is a clear win at 500-1500
+(freckles crisp, colour intact). On a RealSR real photo, step 1500 over-sharpens text into halos
+and drops PSNR below the soft input (27.2 vs 29.3). The local-energy loss buys texture AMOUNT,
+not structure; it plateaus at ~4.9 and then degrades. Pixel-loss-only training cannot do more.
+
+### run3 — DINOv2 perceptual loss (launched 2026-09-05 ~21:10)
+`--w-energy 2.0 --w-dino 1.0` (1 − cosine on DINOv2-base patch tokens, model from the HF cache,
+no torchvision), plus low 1.0 / hp 0.5; lr 1e-5, 3000 steps, dataset2, from stock weights.
+~2.3 s/step alone. Gate: RealSR PSNR must stay ≥ the soft input while hp climbs; H3 face judged
+by eye at 100%/2x.

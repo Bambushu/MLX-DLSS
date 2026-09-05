@@ -123,16 +123,48 @@ def local_energy(hp: torch.Tensor, window: int = 7) -> torch.Tensor:
     return torch.nn.functional.avg_pool2d(hp.abs().permute(0, 3, 1, 2), window, stride=1, padding=window // 2, count_include_pad=False).permute(0, 2, 3, 1)
 
 
-def loss_fn(pred: torch.Tensor, tgt: torch.Tensor, skin: torch.Tensor) -> tuple[torch.Tensor, dict]:
+class DinoPerceptual:
+    """Perceptual distance on DINOv2-base patch features (1 - cosine per token). Scale-free, so
+    it rewards texture that is STRUCTURALLY like the target instead of merely having the same
+    high-pass energy (which run2 turned into halos on non-face content)."""
+
+    def __init__(self, device: str):
+        from transformers import AutoModel
+
+        self.model = AutoModel.from_pretrained("facebook/dinov2-base").eval().to(device)
+        for p in self.model.parameters():
+            p.requires_grad_(False)
+        self.mean = torch.tensor([0.485, 0.456, 0.406], device=device).view(1, 3, 1, 1)
+        self.std = torch.tensor([0.229, 0.224, 0.225], device=device).view(1, 3, 1, 1)
+
+    def features(self, x: torch.Tensor) -> torch.Tensor:
+        x = x.permute(0, 3, 1, 2)
+        x = torch.nn.functional.interpolate(x, size=(224, 224), mode="bilinear", align_corners=False)
+        x = (x - self.mean) / self.std
+        return self.model(pixel_values=x).last_hidden_state[:, 1:]          # patch tokens
+
+    def __call__(self, pred: torch.Tensor, tgt: torch.Tensor) -> torch.Tensor:
+        with torch.no_grad():
+            ft = self.features(tgt)
+        fp = self.features(pred)
+        return (1 - torch.nn.functional.cosine_similarity(fp, ft, dim=-1)).mean()
+
+
+def loss_fn(pred: torch.Tensor, tgt: torch.Tensor, skin: torch.Tensor, weights: dict | None = None, dino: "DinoPerceptual | None" = None) -> tuple[torch.Tensor, dict]:
     """Colour fidelity on the low-pass, a weak pixel term on the high-pass, and a strong match of
     local high-pass ENERGY (so the network is rewarded for the right amount of texture rather
     than punished for texture that is not pixel-aligned, which a plain L1 averages into blur)."""
+    weights = weights or {"low": 1.0, "hp": 0.5, "energy": 4.0, "dino": 0.0}
     w = 1.0 + 2.0 * skin[..., None]                             # skin counts triple
     hp_p, hp_t = highpass(pred), highpass(tgt)
     low = (((pred - hp_p) - (tgt - hp_t)).abs() * w).mean()
     hp = ((hp_p - hp_t).abs() * w).mean()
     energy = ((local_energy(hp_p) - local_energy(hp_t)).abs() * w).mean()
-    return low + 0.5 * hp + 4.0 * energy, {"low": low.item(), "hp": hp.item(), "energy": energy.item()}
+    total = weights["low"] * low + weights["hp"] * hp + weights["energy"] * energy
+    parts = {"low": low.item(), "hp": hp.item(), "energy": energy.item()}
+    if dino is not None and weights.get("dino", 0) > 0:
+        d = dino(pred, tgt); total = total + weights["dino"] * d; parts["dino"] = d.item()
+    return total, parts
 
 
 def save_weights(by_name: dict[str, torch.Tensor], original: Path, out: Path) -> None:
@@ -252,9 +284,12 @@ def cmd_train(args) -> int:
     masker = SkinMasker(device=args.device)
     pairs = Pairs(train_paths, args.crop, masker, seed=args.seed)
     optimizer = torch.optim.AdamW(params, lr=args.lr, weight_decay=0.0, betas=(0.9, 0.99))
+    weights = {"low": args.w_low, "hp": args.w_hp, "energy": args.w_energy, "dino": args.w_dino}
+    dino = DinoPerceptual(args.device) if args.w_dino > 0 else None
     log = open(out / "train.log", "a")
     def note(msg: str) -> None:
         print(msg, flush=True); log.write(msg + "\n"); log.flush()
+    note(f"loss weights {weights}")
     note(f"train {len(train_paths)} stills, holdout {len(hold_paths)}, {len(params)} trainable tensors, "
          f"{sum(p.numel() for p in params) / 1e6:.1f}M params, crop {args.crop}, batch {args.batch}, lr {args.lr}")
     base_eval = evaluate(pipe, hold_paths, masker, args.crop, args.eval_n, args.device)
@@ -267,13 +302,13 @@ def cmd_train(args) -> int:
         tgt = torch.from_numpy(np.stack([b[1] for b in batch])).to(args.device)
         skin = torch.from_numpy(np.stack([b[2] for b in batch])).to(args.device)
         head = pipe.model(feats).float()
-        loss, parts = loss_fn(compose(head, soft), tgt, skin)
+        loss, parts = loss_fn(compose(head, soft), tgt, skin, weights, dino)
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(params, 1.0)
         optimizer.step()
         if step % args.log_every == 0 or step == 1:
-            note(f"step {step} loss {loss.item():.4f} low {parts['low']:.4f} hp {parts['hp']:.4f} energy {parts['energy']:.4f} {(time.time() - started) / step:.2f}s/step")
+            note(f"step {step} loss {loss.item():.4f} " + " ".join(f"{k} {v:.4f}" for k, v in parts.items()) + f" {(time.time() - started) / step:.2f}s/step")
         if step % args.eval_every == 0 or step == args.steps:
             ev = evaluate(pipe, hold_paths, masker, args.crop, args.eval_n, args.device)
             note(f"step {step} eval {json.dumps({k: round(v, 3) for k, v in ev.items()})}")
@@ -305,6 +340,8 @@ def main() -> int:
     t.add_argument("--lr", type=float, default=2e-5); t.add_argument("--seed", type=int, default=0); t.add_argument("--holdout", type=int, default=12)
     t.add_argument("--eval-every", type=int, default=250); t.add_argument("--eval-n", type=int, default=24); t.add_argument("--log-every", type=int, default=25)
     t.add_argument("--device", default="mps")
+    t.add_argument("--w-low", type=float, default=1.0); t.add_argument("--w-hp", type=float, default=0.5)
+    t.add_argument("--w-energy", type=float, default=4.0); t.add_argument("--w-dino", type=float, default=0.0, help="DINOv2 perceptual weight (0 = off)")
     e = sub.add_parser("eval"); e.add_argument("--dataset", required=True); e.add_argument("--weights", required=True); e.add_argument("--weights2", default=None)
     e.add_argument("--n", type=int, default=24); e.add_argument("--crop", type=int, default=256); e.add_argument("--holdout", type=int, default=12); e.add_argument("--device", default="mps")
     args = p.parse_args()
