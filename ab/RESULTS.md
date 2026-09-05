@@ -44,3 +44,30 @@ added flicker (slightly smoother via history blend). Full 15 s clip would be ~27
 Verdict: usable as a subtle skin-texture / tone pass, not a replacement for LTX-2.5 upscale
 (which synthesizes structure). Not yet A/B'd against LTX-2.5 on the same frame — that is a pod
 job. Items 2 (skin auto-mask) and 6 (photoreal fine-tune) are what would make it matter.
+
+## Round 2 — 2026-09-05
+
+### Frame gen vs RIFE 4.7 (same withheld-frame protocol, M5 MPS, unbatched single pairs)
+
+| clip | DLSS FG | RIFE 4.7 | minterpolate |
+|---|---|---|---|
+| faces | 43.30 dB | 43.22 dB (worst 29.5) | 40.97 |
+| yoga | 41.74 dB (worst 31.2) | 42.20 dB (worst 31.5) | 39.66 |
+| speed 800x1440 | ~95 fps out | ~42 fps out | ~15 fps |
+
+Verdict revised: DLSS FG is a TIE with RIFE 4.7 on quality (RIFE +0.5 dB on motion), ~2x faster.
+It is not a quality upgrade over what ComfyUI-Frame-Interpolation already gives us; it is a
+faster equivalent. RIFE 4.26 (newer, also in the pack) not tested and may beat both.
+
+### Frame gen across a hard cut
+Concat faces|yoga at 12fps, interpolate: the seam frame is a full ghost double-exposure
+(strip_cut.png). Scene-cut gate is mandatory before any production use.
+
+### 4x slowmo, yoga hand plant (strip_slow4.png)
+Phases .25/.5/.75 coherent, fingers mildly doubled at .25. Usable.
+
+### Renderer on a sharp 2MP Krea2 still (ray_balcony_evening, strip_krea_zoom.png)
+4.4 s/frame. `standard` adds believable pores where Krea skin was plastic-smooth — a real
+upgrade on a sharp source, the opposite of the soft-H3 result. `--detail-strength 3 --colour 0`
+overcooks into orange-peel. `cinematic` = contrast + darker. Renderer wants a sharp input:
+run it AFTER upscale, not before, and on Krea2 stills directly.
