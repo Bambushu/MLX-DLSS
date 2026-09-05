@@ -139,6 +139,7 @@ class NeuralRenderingPipeline:
         processing_scale: float = 1.0,
         frame_index: int = 0,
         control_mask: np.ndarray | None = None,
+        skin_mask: np.ndarray | None = None,
         automatic_mask: AutomaticMask | None = None,
         normalized_style: float | None = None,
         local_tone_strength: float | None = None,
@@ -148,11 +149,13 @@ class NeuralRenderingPipeline:
         controls = self._controls(profile, normalized_style, local_tone_strength, local_structure_strength)
         if not 1 <= processing_scale <= 4:
             raise ValueError("processing_scale must be within [1, 4]")
-        if control_mask is not None and processing_scale != 1:
-            raise ValueError("a control mask requires processing_scale=1")
         source = np.asarray(image, dtype=np.float32)
         if source.ndim != 3 or source.shape[2] != 3:
             raise ValueError("image must be (height, width, 3)")
+        if control_mask is not None:
+            control_mask = np.asarray(control_mask, dtype=np.float32)
+            if control_mask.shape != source.shape:
+                raise ValueError("control mask must match the image shape")
         started = time.perf_counter()
         processing = source
         if processing_scale != 1:
@@ -161,9 +164,14 @@ class NeuralRenderingPipeline:
                 int(round(source.shape[1] * processing_scale)),
                 int(round(source.shape[0] * processing_scale)),
             )
+            if control_mask is not None:   # the masks follow the image to the processing extent
+                control_mask = resample(control_mask, processing.shape[1], processing.shape[0])
+            if skin_mask is not None:
+                skin_mask = resample(np.asarray(skin_mask, dtype=np.float32)[..., None], processing.shape[1], processing.shape[0])[..., 0]
         geometry = NetworkGeometry.vendor_aligned(processing.shape[1], processing.shape[0])
         features = make_features(
-            processing, frame_index=frame_index, geometry=geometry, automatic_mask=automatic_mask, control_mask=control_mask, **controls
+            processing, frame_index=frame_index, geometry=geometry, automatic_mask=automatic_mask, control_mask=control_mask,
+            skin_mask=skin_mask, **controls
         )
         return PreparedFrame(source, processing, features, geometry, control_mask, time.perf_counter() - started)
 
@@ -207,6 +215,7 @@ class NeuralRenderingPipeline:
         intensity: float = 1.0,
         frame_index: int = 0,
         control_mask: np.ndarray | None = None,
+        skin_mask: np.ndarray | None = None,
         automatic_mask: AutomaticMask | None = None,
         normalized_style: float | None = None,
         local_tone_strength: float | None = None,
@@ -215,7 +224,7 @@ class NeuralRenderingPipeline:
         """Enhance one (height, width, 3) float32 RGB frame in [0, 1]."""
         prepared = self.prepare(
             image, profile=profile, processing_scale=processing_scale, frame_index=frame_index, control_mask=control_mask,
-            automatic_mask=automatic_mask, normalized_style=normalized_style, local_tone_strength=local_tone_strength,
+            skin_mask=skin_mask, automatic_mask=automatic_mask, normalized_style=normalized_style, local_tone_strength=local_tone_strength,
             local_structure_strength=local_structure_strength,
         )
         started = time.perf_counter()

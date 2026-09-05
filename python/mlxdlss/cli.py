@@ -52,6 +52,10 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--intensity", type=float, default=1.0)
     run.add_argument("--noise-frame-index", type=int, default=0)
     run.add_argument("--control-mask", type=pathlib.Path, help="RGB mask image: red blend, green tone, blue structure")
+    run.add_argument("--auto-mask", default="none", choices=("none", "skin"), help="skin: confine the structure/detail pass to face skin found by a face-parsing model (tone and colour stay global)")
+    run.add_argument("--mask-floor", type=float, default=0.0, help="structure strength kept outside the auto mask, 0-1 (default 0)")
+    run.add_argument("--mask-feather", type=float, default=8.0, help="auto-mask edge softening, gaussian sigma in pixels (default 8)")
+    run.add_argument("--save-mask", type=pathlib.Path, default=None, help="also write the skin mask the auto mask produced (PNG)")
     run.add_argument("--device", default="auto", help="auto, cpu, cuda, cuda:N or mps")
     run.add_argument("--precision", default="reference", choices=PRECISIONS)
     run.add_argument("--summary", action="store_true", help="print a JSON summary")
@@ -66,6 +70,15 @@ def main(argv: list[str] | None = None) -> int:
     control_mask = None
     if args.control_mask is not None:
         control_mask = read_image(args.control_mask, image.shape[1], image.shape[0])
+    skin_mask = None
+    if args.auto_mask == "skin":
+        if control_mask is not None:
+            raise SystemExit("--auto-mask and --control-mask are exclusive")
+        from .automask import SkinMasker
+
+        skin_mask = SkinMasker(device=args.device, feather_sigma=args.mask_feather).mask(image, floor=args.mask_floor)
+        if args.save_mask is not None:
+            write_image(args.save_mask, np.repeat(skin_mask[..., None], 3, axis=2))
     started = time.perf_counter()
     pipeline = NeuralRenderingPipeline.from_safetensors(args.weights, device=args.device, precision=args.precision)
     load_seconds = time.perf_counter() - started
@@ -79,6 +92,7 @@ def main(argv: list[str] | None = None) -> int:
         intensity=args.intensity,
         frame_index=args.noise_frame_index,
         control_mask=control_mask,
+        skin_mask=skin_mask,
     )
     write_image(args.output, result.image)
     summary = {

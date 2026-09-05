@@ -152,6 +152,7 @@ the comparison clip and the folder.
 | `--detail-strength 0–8`, `--colour-strength 0–4`, `--detail-radius` | `1`, `1`, `4` | `result = input + colour·lowpass(change) + detail·highpass(change)` |
 | `--intensity 0–1` | `1` | blend of the enhanced result over the input |
 | `--control-mask rgb.f32` | none | red: blend, green: tone, blue: structure, per pixel |
+| `--auto-mask skin`, `--mask-floor 0–1`, `--mask-feather px` | `none`, `0`, `8` | face-parsing model (`pip install './python[mask]'`) fills the network's skin/automatic-mask channels per pixel, so the skin-specific detail lands on face skin and hair/background keep their own texture; floor = mask value outside skin; `--save-mask` writes it. Also on `mlxdlss-video convert` (torch backend) |
 | `--noise-frame-index` | `0` | deterministic noise seed; sessions advance it per frame |
 
 ## Python API

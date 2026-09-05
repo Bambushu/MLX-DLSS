@@ -3,7 +3,7 @@
 Evidence for every item is in `ab/RESULTS.md`. Order = build order. Each item lists the gate
 that decides whether it ships.
 
-## 1. Scene-cut gate for frame generation  (~1 day)
+## 1. Scene-cut gate for frame generation  (~1 day) — DONE
 - Problem: interpolating across a cut yields a ghost blend (ab/strip_cut.png).
 - Design: per pair, luma-histogram distance + mean abs diff on the 2x2-box candidates the graph
   already computes; above threshold, emit a duplicate of frame A (fps mode) or hold (slowmo)
@@ -11,7 +11,7 @@ that decides whether it ships.
 - CLI: `--scene-cut [thresh]` on `mlxdlss-video framegen`; log the cut indices.
 - Gate: the faces|yoga concat produces no blended seam; PSNR on the two clean clips unchanged.
 
-## 2. Skin / face auto-mask for the renderer  (1-2 days)
+## 2. Skin / face auto-mask for the renderer  (1-2 days) — DONE (per-pixel channels 13/14, not the control mask; see RESULTS)
 - Problem: channels 13-14 (vendor's skin/auto mask) are zero in the port, so detail is applied
   uniformly; on soft sources that is mostly tone shift, on sharp sources it also textures hair
   and background.

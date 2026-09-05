@@ -95,3 +95,26 @@ Gate: concat seam held (strip_cut_gated.png, 1 cut reported), faces/yoga PSNR un
 43.30 / 41.74 dB with 0 cuts reported. Unit tests in tests/test_framegen_video.py::SceneCutTests.
 Also in the web runner (fixed 0.15). Not applied to `mlxdlss framegen-stream` on the Swift side —
 the Python wrapper gates its output too, so the Metal backend is covered.
+
+## Roadmap item 2 — skin auto-mask for the renderer — DONE 2026-09-05
+Segmenter: `jonathandinu/face-parsing` (SegFormer, 19 CelebAMask-HQ classes, cached in HF hub),
+0.4 s/still on MPS, no torchvision (preprocessing done in torch). Skin = skin/nose/eyes/brows/
+ears/mouth/lips/neck, feathered sigma 8 px.
+
+**Routing finding (exp_*.png):** feeding the mask through the control mask's BLUE channel
+switches the skin detail OFF (channels 13/14 go to 0 → hp on skin 2.83 vs 3.03 unmasked = input).
+Feeding it per pixel into channels 13 AND 14 (the vendor's skin / automatic-mask channels, mask
+mode on) keeps full skin detail (3.02) and stops the renderer softening hair/background
+(hp outside 4.73 vs 4.47 unmasked, input 4.74). Channel 13 alone is weaker (2.95). So the port
+now has a `skin_mask` feature input, not a control-mask hack.
+
+Gate (sheet6_automask_*.jpg, `--processing-scale 2 --colour-strength 0.5 --auto-mask skin`):
+
+| still | hp skin in/unmasked/masked | hp outside in/unmasked/masked | change outside unmasked→masked |
+|---|---|---|---|
+| window_rain | 2.82 / 2.91 / 2.90 | 4.74 / 4.39 / 4.64 | 2.67 → 1.87 |
+| bedroom_golden | 3.45 / 3.70 / 3.64 | 2.36 / 2.33 / 2.26 | 2.38 → 1.46 |
+
+Skin detail kept, hair strands and raindrops no longer smoothed, tone pass still global.
+Limitation: the parser is FACE-only (face+neck); chest/arm skin gets the floor value.
+Control masks now also work at processing_scale != 1 (resampled to the processing extent).

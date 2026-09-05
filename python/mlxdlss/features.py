@@ -134,11 +134,16 @@ def make_features(
     local_structure_strength: float = 1.0,
     automatic_mask: AutomaticMask | None = None,
     control_mask: np.ndarray | None = None,
+    skin_mask: np.ndarray | None = None,
 ) -> np.ndarray:
     """Build the (network_height, network_width, 16) float32 feature tensor.
 
     ``color`` is (height, width, 3) float32 in [0, 1]; ``control_mask`` has the
     same shape (red: blend in the postprocessor, green: tone, blue: structure).
+    ``skin_mask`` is (height, width) in [0, 1]: the per-pixel skin / automatic mask the
+    vendor derives from its own segmentation, written to channels 13 and 14 scaled by the
+    ``automatic_mask`` strengths (default: the local structure strength); it enables the
+    mask mode (channel 12 = 1) like ``automatic_mask`` does.
     """
     color = np.asarray(color, dtype=np.float32)
     if color.ndim != 3 or color.shape[2] != 3:
@@ -152,10 +157,19 @@ def make_features(
         control_mask = np.asarray(control_mask, dtype=np.float32)
         if control_mask.shape != color.shape:
             raise ValueError("control mask must match the colour image shape")
+    if skin_mask is not None:
+        skin_mask = np.asarray(skin_mask, dtype=np.float32)
+        if skin_mask.shape != color.shape[:2]:
+            raise ValueError("skin mask must be (height, width) matching the colour image")
     style = half(normalized_style)
     tone = half(local_tone_strength)
     if control_mask is not None:
         structure = np.float32(0); skin_structure = np.float32(0); automatic_structure = np.float32(0)
+    elif skin_mask is not None:
+        structure = half(1)
+        skin_strength = automatic_mask.skin_structure_strength if automatic_mask is not None and automatic_mask.skin_structure_strength >= 0 else local_structure_strength
+        automatic_strength = automatic_mask.automatic_mask_structure_strength if automatic_mask is not None and automatic_mask.automatic_mask_structure_strength >= 0 else local_structure_strength
+        skin_structure = np.float32(skin_strength); automatic_structure = np.float32(automatic_strength)   # per-pixel below
     elif automatic_mask is not None:
         enabled = max(automatic_mask.skin_structure_strength, automatic_mask.automatic_mask_structure_strength) >= 0
         structure = half(1 if enabled else local_structure_strength)
@@ -186,8 +200,13 @@ def make_features(
     else:
         features[..., 11] = tone
         features[..., 12] = structure
-    features[..., 13] = skin_structure
-    features[..., 14] = automatic_structure
+    if skin_mask is not None and control_mask is None:
+        mask = np.clip(skin_mask[rows[:, None], columns[None, :]], 0, 1)
+        features[..., 13] = half(mask * skin_structure)
+        features[..., 14] = half(mask * automatic_structure)
+    else:
+        features[..., 13] = skin_structure
+        features[..., 14] = automatic_structure
     return features
 
 

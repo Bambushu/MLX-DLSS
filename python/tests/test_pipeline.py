@@ -56,13 +56,14 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(result.image.shape, (32, 40, 3))
         self.assertEqual(result.network_extent, (320, 320))
 
-    def test_control_mask_requires_unit_scale_and_profile_is_validated(self):
+    def test_control_mask_shape_and_profile_are_validated(self):
         pipeline = NeuralRenderingPipeline(self.weights, device="cpu")
         image = np.zeros((8, 8, 3), dtype=np.float32)
         with self.assertRaises(ValueError):
-            pipeline.enhance(image, control_mask=np.ones_like(image), processing_scale=2)
+            pipeline.enhance(image, control_mask=np.ones((8, 4, 3), dtype=np.float32), processing_scale=2)
         with self.assertRaises(ValueError):
             pipeline.enhance(image, profile="vivid")
+        pipeline.enhance(image, control_mask=np.ones_like(image), processing_scale=2)   # the mask follows the processing scale
 
     def test_session_advances_the_noise_frame_index(self):
         pipeline = NeuralRenderingPipeline(self.weights, device="cpu")

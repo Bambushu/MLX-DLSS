@@ -118,6 +118,7 @@ def make_temporal_features(
     local_structure_strength: float = 1.0,
     automatic_mask: AutomaticMask | None = None,
     control_mask: np.ndarray | None = None,
+    skin_mask: np.ndarray | None = None,
 ) -> np.ndarray:
     """Logical-size (H, W, 16) features: first-frame layout with reprojected history in channels 7-9."""
     color = np.asarray(color, dtype=np.float32); history = np.asarray(history, dtype=np.float32); motion = np.asarray(motion, dtype=np.float32)
@@ -128,7 +129,7 @@ def make_temporal_features(
         raise ValueError("motion must be (height, width, 2)")
     features = make_features(
         color, frame_index=frame_index, normalized_style=normalized_style, local_tone_strength=local_tone_strength,
-        local_structure_strength=local_structure_strength, automatic_mask=automatic_mask, control_mask=control_mask,
+        local_structure_strength=local_structure_strength, automatic_mask=automatic_mask, control_mask=control_mask, skin_mask=skin_mask,
     )
     yy, xx = np.indices((height, width))
     if depth_guide == "closest":
@@ -261,7 +262,7 @@ class TemporalSession:
                 controls[key] = value
         return controls
 
-    def process(self, frame: np.ndarray, *, motion: np.ndarray | None = None, control_mask: np.ndarray | None = None) -> np.ndarray:
+    def process(self, frame: np.ndarray, *, motion: np.ndarray | None = None, control_mask: np.ndarray | None = None, skin_mask: np.ndarray | None = None) -> np.ndarray:
         frame = np.asarray(frame, dtype=np.float32)
         if frame.ndim != 3 or frame.shape[2] != 3:
             raise ValueError("frame must be (height, width, 3)")
@@ -271,13 +272,13 @@ class TemporalSession:
         geometry = NetworkGeometry.vendor_aligned(width, height)
         controls = self._controls()
         if self.history is None:
-            network = make_features(frame, frame_index=self.frame_index, geometry=geometry, control_mask=control_mask, **controls)
+            network = make_features(frame, frame_index=self.frame_index, geometry=geometry, control_mask=control_mask, skin_mask=skin_mask, **controls)
             head = geometry.crop(self.pipeline.run_features(network))
             output = compose_head(head, frame, control_mask=control_mask, intensity=self.options.intensity)
         else:
             if motion is None:
                 motion = self.motion(frame, self.previous)
-            features = make_temporal_features(frame, self.history, motion, frame_index=self.frame_index, control_mask=control_mask, **controls)
+            features = make_temporal_features(frame, self.history, motion, frame_index=self.frame_index, control_mask=control_mask, skin_mask=skin_mask, **controls)
             network = extend_features(features, geometry, self.frame_index)
             head = geometry.crop(self.pipeline.run_features(network))
             output = compose_temporal(head, frame, features, blend_scale=self.options.blend_scale, control_mask=control_mask, intensity=self.options.intensity)

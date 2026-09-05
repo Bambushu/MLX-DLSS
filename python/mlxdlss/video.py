@@ -98,6 +98,9 @@ class ConvertOptions:
     motion: str = "flow"           # temporal mode: 'flow' (optical flow) or 'zero'
     scene_cut_threshold: float = 0.3
     blend_scale: float = BLEND_SCALE
+    auto_mask: str = "none"        # 'skin': per-frame face-parsing control mask (torch backend only)
+    mask_floor: float = 0.0
+    mask_feather: float = 8.0
     backend: str = "torch"         # 'torch' (this pipeline) or 'mlxdlss' (Swift Metal runtime via `mlxdlss stream`, macOS)
     model_package: str | None = None
     mlxdlss: str | None = None
@@ -173,6 +176,16 @@ def convert(
             expected = min(expected, options.frame_limit)
     session = None
     stream = None
+    masker = None
+    if options.auto_mask == "skin":
+        if options.backend != "torch":
+            raise VideoToolError("--auto-mask needs --backend torch")
+        from .automask import SkinMasker
+
+        masker = SkinMasker(device=pipeline.device, feather_sigma=options.mask_feather)
+    elif options.auto_mask != "none":
+        raise VideoToolError("auto_mask must be 'none' or 'skin'")
+    mask_for = (lambda frame: masker.mask(frame, floor=options.mask_floor)) if masker is not None else (lambda frame: None)
     if options.backend == "mlxdlss":
         from .mlxdlss_stream import MLXDLSSStreamSession
 
@@ -202,7 +215,7 @@ def convert(
     started = time.perf_counter(); last_status = started; frames = 0
     def emit_temporal(frame):
         nonlocal frames
-        image = np.clip(stream.process_frame(frame) if stream is not None else session.process(frame), 0, 1) * scale + 0.5
+        image = np.clip(stream.process_frame(frame) if stream is not None else session.process(frame, skin_mask=mask_for(frame)), 0, 1) * scale + 0.5
         encoder.stdin.write(np.ascontiguousarray(image.astype(dtype)).tobytes())
         frames += 1
         if progress is not None:
@@ -232,7 +245,7 @@ def convert(
             if session is not None or stream is not None:
                 emit_temporal(frame)
             else:
-                pending.append(pipeline.prepare(frame, frame_index=options.start_frame + frames + len(pending), **prepare_options))
+                pending.append(pipeline.prepare(frame, frame_index=options.start_frame + frames + len(pending), skin_mask=mask_for(frame), **prepare_options))
                 if len(pending) >= options.batch:
                     emit(pending); pending = []
             now = time.perf_counter()
