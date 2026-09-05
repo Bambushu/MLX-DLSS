@@ -81,6 +81,55 @@ class InterpolateVideoTests(unittest.TestCase):
                     interpolate_video(src, dst, self.generator, options, log=lambda _m: None)
 
 
+def _cut_video(path: pathlib.Path, fps: int = 10) -> None:
+    """Three frames of a bright pattern, a hard cut, three frames of black."""
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                    "-f", "lavfi", "-i", f"testsrc=size=64x48:rate={fps}:duration={3 / fps}",
+                    "-f", "lavfi", "-i", f"color=black:size=64x48:rate={fps}:duration={3 / fps}",
+                    "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]", "-map", "[v]",
+                    "-c:v", "libx264", "-qp", "0", "-pix_fmt", "yuv444p", str(path)], check=True)
+
+
+def _decode(path: pathlib.Path):
+    import numpy as np
+
+    info = probe(path)
+    raw = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(path), "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                         check=True, capture_output=True).stdout
+    return np.frombuffer(raw, dtype=np.uint8).reshape(-1, info.height, info.width, 3).astype(float)
+
+
+@unittest.skipUnless(HAVE_FFMPEG, "ffmpeg/ffprobe not available")
+class SceneCutTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.generator = FrameGenerator(synthetic_framegen_weights(), device="cpu")
+
+    def test_gate_off_by_default_reports_no_cuts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            src = pathlib.Path(directory) / "src.mp4"; dst = pathlib.Path(directory) / "dst.mp4"
+            _cut_video(src)
+            result = interpolate_video(src, dst, self.generator, FrameGenOptions(audio="none"), log=lambda _m: None)
+            self.assertEqual(result.scene_cuts, 0)
+
+    def test_gate_holds_the_seam_instead_of_blending(self):
+        with tempfile.TemporaryDirectory() as directory:
+            src = pathlib.Path(directory) / "src.mp4"; dst = pathlib.Path(directory) / "dst.mp4"
+            _cut_video(src)
+            lossless = ["-c:v", "libx264", "-qp", "0", "-pix_fmt", "yuv444p"]
+            result = interpolate_video(src, dst, self.generator, FrameGenOptions(audio="none", factor=4, scene_cut_threshold=0.15, encode_args=lossless), log=lambda _m: None)
+            self.assertEqual(result.scene_cuts, 1)
+            self.assertEqual(result.output_frames, 6 + 5 * 3)
+            frames = _decode(dst)
+            a, b = frames[8], frames[12]                   # the last pattern frame and the first black frame
+            seam = frames[9:12]                            # phases 0.25, 0.5, 0.75
+            self.assertLess(abs(seam[0] - a).mean(), 2.0)  # phase < 0.5 holds A
+            self.assertLess(abs(seam[1] - b).mean(), 2.0)  # phase >= 0.5 shows B
+            self.assertLess(abs(seam[2] - b).mean(), 2.0)
+            clean = frames[1]                              # a generated frame inside the pattern segment still comes from the network
+            self.assertGreater(min(abs(clean - frames[0]).mean(), abs(clean - frames[4]).mean()), 0.0)
+
+
 @unittest.skipUnless(HAVE_FFMPEG, "ffmpeg/ffprobe not available")
 class MetalBackendTests(unittest.TestCase):
     def test_mlxdlss_backend_generates_frames_when_the_binary_exists(self):

@@ -49,6 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
     fg.add_argument("--audio", default="copy", choices=AUDIO_MODES, help="copy the audio, stretch it to the slowed video (atempo, pitch kept) or drop it")
     fg.add_argument("--device", default="auto"); fg.add_argument("--precision", default="reference", choices=("reference", "fast"))
     fg.add_argument("--batch", type=int, default=4, help="consecutive frame pairs generated per pass (default 4)")
+    fg.add_argument("--scene-cut", type=float, default=0.15, help="mean luma change (0-1) between two input frames that marks a cut: the pair is held (hard cut at the midpoint) instead of blended; 0 disables (default 0.15; clean 12 fps footage measures under 0.1, a cut 0.27+)")
     fg.add_argument("--backend", default="torch", choices=("torch", "mlxdlss"), help="'mlxdlss' streams frames through the Swift Metal runtime (macOS)")
     fg.add_argument("--mlxdlss", default=None, help="path to the mlxdlss binary (default: PATH or the repository build)")
     fg.add_argument("--mlxdlss-precision", default="float16", choices=("float16", "float32"))
@@ -86,11 +87,12 @@ def main(argv: list[str] | None = None) -> int:
                 decode_args=shlex.split(args.decode_args), encode_args=None if args.encode_args is None else shlex.split(args.encode_args),
                 overwrite=args.overwrite, status_interval=args.status_interval,
                 backend=args.backend, mlxdlss=args.mlxdlss, mlxdlss_weights=str(args.weights), mlxdlss_precision=args.mlxdlss_precision, batch=args.batch,
+                scene_cut_threshold=args.scene_cut,
             )
             result = interpolate_video(args.input, args.output, generator, options, ffmpeg=args.ffmpeg, ffprobe=args.ffprobe)
             where = "mlxdlss metal" if generator is None else str(generator.device)
             print(f"wrote {result.output} ({result.input_frames} -> {result.output_frames} frames, {result.width}x{result.height}, "
-                  f"{result.input_fps:.3f} -> {result.output_fps:.3f} fps, {result.output_frames / result.seconds if result.seconds else 0:.2f} fps on {where})")
+                  f"{result.input_fps:.3f} -> {result.output_fps:.3f} fps, {result.output_frames / result.seconds if result.seconds else 0:.2f} fps on {where}, scene cuts {result.scene_cuts})")
             return 0
         pipeline = None
         if args.backend == "torch":

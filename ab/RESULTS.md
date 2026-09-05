@@ -86,3 +86,12 @@ contrast; 1.0 flattens golden-hour. Detail contribution is identical across the 
 
 **Krea2 still recipe (current):** `--processing-scale 2 --detail-strength 1 --colour-strength 0.5`
 (0.3 for warm/low-key scenes; detail 2 for tight close-ups only). ~10 s/still on the M5.
+
+## Roadmap item 1 — scene-cut gate for frame gen — DONE 2026-09-05
+Per-pair mean absolute Rec.709 luma change, default threshold 0.15 (`--scene-cut`). Measured:
+clean 12 fps pairs max 0.094 (faces, fast head turn), the faces|yoga seam 0.275. On a cut the
+generated slots hold A for phases < 0.5 and B from 0.5 (hard cut at the midpoint).
+Gate: concat seam held (strip_cut_gated.png, 1 cut reported), faces/yoga PSNR unchanged at
+43.30 / 41.74 dB with 0 cuts reported. Unit tests in tests/test_framegen_video.py::SceneCutTests.
+Also in the web runner (fixed 0.15). Not applied to `mlxdlss framegen-stream` on the Swift side —
+the Python wrapper gates its output too, so the Metal backend is covered.

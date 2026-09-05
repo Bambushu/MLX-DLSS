@@ -92,7 +92,9 @@ mlxdlss-video framegen in.mp4 slow.mp4 --weights weights/framegen.safetensors --
 ```
 
 `--mode fps` multiplies the frame rate and keeps the duration; `--mode slowmo`
-keeps the rate and stretches the clip. `--audio copy|stretch|none`: `stretch`
+keeps the rate and stretches the clip. `--scene-cut 0.15` (default) holds a pair
+whose mean luma change exceeds the threshold as a hard cut at the midpoint instead of
+blending two unrelated frames; `0` disables. `--audio copy|stretch|none`: `stretch`
 (slow motion only) uses FFmpeg `atempo`, pitch preserved.
 
 Video through the neural renderer:

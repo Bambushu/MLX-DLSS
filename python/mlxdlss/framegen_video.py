@@ -42,6 +42,15 @@ def atempo_chain(ratio: float) -> str:
     return ",".join(f"atempo={step:g}" for step in steps)
 
 
+def is_scene_cut(a: np.ndarray, b: np.ndarray, threshold: float) -> bool:
+    """True when the mean absolute Rec. 709 luma change between two uint8 RGB frames exceeds
+    ``threshold`` (0..1 scale, as the renderer's temporal session uses); ``threshold <= 0`` never cuts."""
+    if threshold <= 0:
+        return False
+    weights = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32) / 255.0
+    return float(np.abs(a.astype(np.float32) @ weights - b.astype(np.float32) @ weights).mean()) > threshold
+
+
 @dataclass
 class FrameGenOptions:
     mode: str = "fps"                 # "fps" (rate x factor) or "slowmo" (duration x factor)
@@ -57,6 +66,7 @@ class FrameGenOptions:
     mlxdlss_weights: str | None = None    # dense safetensors for the Swift runtime (defaults to the torch weights path)
     mlxdlss_precision: str = "float16"
     batch: int = 4                    # consecutive pairs generated per pass (both backends)
+    scene_cut_threshold: float = 0.0  # mean absolute luma change (0..1) between a pair that marks a cut; 0 disables
 
 
 @dataclass
@@ -69,6 +79,7 @@ class FrameGenResult:
     input_fps: float
     output_fps: float
     output: Path
+    scene_cuts: int = 0
 
 
 def interpolate_video(
@@ -87,6 +98,9 @@ def interpolate_video(
 
     Pairs are generated ``options.batch`` at a time; the output keeps the stream order
     (frame, generated frames, next frame, ...) by holding input frames until their pair is done.
+    A pair whose mean absolute luma change exceeds ``options.scene_cut_threshold`` is a scene
+    cut: its generated frames are replaced by a hard cut at the midpoint (the first frame for
+    phases below 0.5, the second from 0.5 on) instead of a blend of two unrelated images.
     ``progress(input_frames_done, input_frames_expected)`` is called per input frame;
     ``should_stop()`` is polled per input frame and ends the job early."""
     options = options or FrameGenOptions()
@@ -157,15 +171,19 @@ def interpolate_video(
     per_pair = options.factor - 1
     batch = max(1, int(options.batch))
     held: list[np.ndarray] = []       # input frames whose preceding generated frames are not written yet
+    cuts: list[np.ndarray | None] = []  # per held pair: the pair's first frame when it is a scene cut, else None
+    scene_cuts = 0
+    hold_first = [k / options.factor < 0.5 for k in range(1, options.factor)]
 
     def emit(generated: list[np.ndarray]) -> None:
         """Write the generated frames of the oldest held pairs, each followed by its input frame."""
         pairs = len(generated) // per_pair
         for i in range(pairs):
-            for g in generated[i * per_pair:(i + 1) * per_pair]:
-                write(g)
+            first = cuts[i]
+            for k, g in enumerate(generated[i * per_pair:(i + 1) * per_pair]):
+                write(g if first is None else (first if hold_first[k] else held[i]))
             write(held[i])
-        del held[:pairs]
+        del held[:pairs]; del cuts[:pairs]
 
     try:
         previous: np.ndarray | None = None
@@ -184,6 +202,11 @@ def interpolate_video(
                 write(frame)
             else:
                 held.append(frame)
+                cut = is_scene_cut(previous, frame, options.scene_cut_threshold)
+                cuts.append(previous if cut else None)
+                if cut:
+                    scene_cuts += 1
+                    log(f"scene cut between input frames {frames_in - 2} and {frames_in - 1}: held instead of generated")
             if stream is not None:
                 emit(stream.push(frame))
             else:
@@ -205,7 +228,7 @@ def interpolate_video(
             emit([g for pair in generator.generate_pairs(window, options.factor) for g in pair])
         for frame in held:                # a stopped job: input frames whose pairs were never generated
             write(frame)
-        held.clear()
+        held.clear(); cuts.clear()
         encoder.stdin.close()
         decoder_error = decoder.stderr.read().decode(errors="replace").strip()
         encoder_error = encoder.stderr.read().decode(errors="replace").strip()
@@ -222,5 +245,5 @@ def interpolate_video(
     if encoder.returncode:
         raise VideoToolError(f"ffmpeg encode failed: {encoder_error}")
     seconds = time.perf_counter() - started
-    log(f"DONE {frames_in} -> {frames_out} frames in {seconds:.1f} s ({frames_out / seconds if seconds else 0:.2f} fps out) -> {destination}")
-    return FrameGenResult(frames_in, frames_out, seconds, info.width, info.height, float(in_rate), float(out_rate), destination)
+    log(f"DONE {frames_in} -> {frames_out} frames in {seconds:.1f} s ({frames_out / seconds if seconds else 0:.2f} fps out), scene cuts {scene_cuts} -> {destination}")
+    return FrameGenResult(frames_in, frames_out, seconds, info.width, info.height, float(in_rate), float(out_rate), destination, scene_cuts)

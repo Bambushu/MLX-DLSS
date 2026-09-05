@@ -18,3 +18,9 @@ ab/*.psnr
 ab/fr/
 weights/
 .venv/
+ab/*.png
+ab/*.jpg
+ab/*.txt
+ab/stub/
+ab/rife_test.py
+ab/krea/*.png

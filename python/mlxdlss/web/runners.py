@@ -162,7 +162,7 @@ class JobRunner:
         if not settings.fg_weights:
             raise ValueError("set the frame generation weights (mlxdlss-weights extract-fg) in Settings")
         backend = settings.resolved_backend("fg")
-        options = FrameGenOptions(mode=fg.mode, factor=fg.factor, audio=fg.audio, overwrite=True, status_interval=1e9,
+        options = FrameGenOptions(mode=fg.mode, factor=fg.factor, audio=fg.audio, overwrite=True, status_interval=1e9, scene_cut_threshold=0.15,
                                   backend=backend, mlxdlss=settings.mlxdlss_binary or None, mlxdlss_weights=str(Path(settings.fg_weights).expanduser()))
         generator = None
         if backend == "torch":
