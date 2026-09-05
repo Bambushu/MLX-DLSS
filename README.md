@@ -143,6 +143,11 @@ detail 2; drag the divider. Video: the converted clip plays in place, «Side by
 side» shows it next to the original. Jobs: every result with its download,
 the comparison clip and the folder.
 
+## ComfyUI
+
+`comfyui/ComfyUI-MLX-DLSS` wraps both networks as nodes (renderer with the skin auto-mask,
+frame generation with the scene-cut gate) and ships `example_workflows/`. See its README.
+
 ## Controls (neural rendering)
 
 | option (`mlxdlss run` / `mlxdlss-torch run` / `mlxdlss-video convert`) | default | effect |

@@ -21,7 +21,7 @@ that decides whether it ships.
 - Gate: Krea2 still, standard profile: pores on skin, hair and background byte-identical to
   input outside the mask (md5 of masked regions).
 
-## 3. ComfyUI node pack  (1-2 days)
+## 3. ComfyUI node pack  (1-2 days) — DONE (comfyui/ComfyUI-MLX-DLSS, symlinked into ~/ComfyUI-h3)
 - Two nodes: `MLXDLSS Frame Generation` (IMAGE batch in, multiplier, scene-cut) and
   `MLXDLSS Neural Rendering` (IMAGE in, profile, scale, detail, colour, intensity, optional MASK).
 - Wraps the existing `FrameGenerator` / `NeuralRenderingPipeline` Python API. Device auto

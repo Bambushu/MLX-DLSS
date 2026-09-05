@@ -118,3 +118,12 @@ Gate (sheet6_automask_*.jpg, `--processing-scale 2 --colour-strength 0.5 --auto-
 Skin detail kept, hair strands and raindrops no longer smoothed, tone pass still global.
 Limitation: the parser is FACE-only (face+neck); chest/arm skin gets the floor value.
 Control masks now also work at processing_scale != 1 (resampled to the processing extent).
+
+## Roadmap item 3 — ComfyUI node pack — DONE 2026-09-05
+`comfyui/ComfyUI-MLX-DLSS`: 4 nodes (load renderer / neural rendering / load framegen / frame
+generation) + 2 example workflows, symlinked into `~/ComfyUI-h3/custom_nodes`, mlxdlss installed
+editable into the ComfyUI-h3 venv. Gate: renderer node vs CLI on ray_window_rain (scale 2, c0.5,
+auto-mask) = max abs diff 0; framegen node on cut12 = 1 cut, seam frame byte-equal to frame B
+(phase 0.5), generated frames within 0.86/255 of the crf-10 CLI file. Unit tests
+tests/test_comfyui_nodes.py (synthetic weights). Not yet loaded in a RUNNING ComfyUI — needs a
+restart of the :8288 instance; not done unilaterally.
