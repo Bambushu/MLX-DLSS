@@ -170,3 +170,22 @@ ffmpeg-psnr numbers; rankings are what matter:
 - Frame gen: Metal 136 fps out vs 77 fps (torch) on the 15 s clip; cut gate applies (1 cut on cut12).
 - ComfyUI: `MLXDLSSNeuralRenderingMetal` node (temporal video through the Metal stream),
   3.98 fps on the same 24 frames, within 0.96/255 of the CLI. No skin mask on the Metal path yet.
+
+## Roadmap item 6 — photoreal fine-tune — IN PROGRESS 2026-09-05
+**Feasibility (the big one):** the recovered graph trains AS-IS. Straight-through estimator on
+every `e4m3_round_trip` (`v + (round(v) - v).detach()`), `MLXDLSS_TORCH_CHUNK_TOKENS=0` to avoid
+the in-place chunk writers, logical weights flipped to `requires_grad`: finite non-zero
+gradients on 508/649 tensors (the 141 without are attn_scale/attn_bias/attention_scalar/
+blend_scale constants). 256x256 crop fwd+bwd 2.0 s, 3.9 GB on the M5. No reimplementation of the
+attention blocks needed — "weeks" became "days".
+
+`scripts/finetune.py`: self-supervised soft→sharp pairs (sharp still = target; input = downscale
+0.5-0.8 + resample + JPEG q28-60 + blur σ0.4-1.0), skin-biased 256 crops, skin mask in channels
+13/14, torch composition `soft + 0.25*half(head[:3])`. Dataset: 402 face stills (skin ≥ 5%) from
+~/ComfyUI/output + feed-final, 12 held out.
+
+Smoke run (20 steps, plain L1 + hp L1): the stock net at scale 1 LOWERS PSNR vs the soft input
+(36.0 → 30.7, the colour prior) and the fine-tune snapped to identity (36.0, hp unchanged) —
+pixel losses on hallucinated texture regress to the mean. Loss changed to low-pass L1 + 0.5 hp
+L1 + 4.0 local high-pass ENERGY match (alignment-free texture amount). run1: 1500 steps, batch 2,
+lr 1.5e-5, ~2 s/step.

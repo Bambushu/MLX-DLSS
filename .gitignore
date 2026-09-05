@@ -24,3 +24,5 @@ ab/*.txt
 ab/stub/
 ab/rife_test.py
 ab/krea/*.png
+ab/ft/*/
+ab/ft/*.jpg
