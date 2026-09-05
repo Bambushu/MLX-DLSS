@@ -8,6 +8,22 @@ METALLIB="$METAL_BUILD/mlx/backend/metal/kernels/mlx.metallib"
 MIN_MACOS_VERSION="${MLXDLSS_MIN_MACOS_VERSION:-14.0}"
 BUILD_JOBS="${MLXDLSS_BUILD_JOBS:-2}"
 
+# Fast path: a prebuilt mlx.metallib (the `mlx` pip wheel of the SAME MLX version as the
+# mlx-swift checkout ships one at site-packages/mlx/lib/mlx.metallib). Compiling the kernels
+# needs the Metal compiler, which Command Line Tools do not include (full Xcode only).
+if [[ -n "${MLXDLSS_METALLIB:-}" ]]; then
+  if [[ ! -s "$MLXDLSS_METALLIB" ]]; then
+    echo "MLXDLSS_METALLIB does not exist: $MLXDLSS_METALLIB" >&2
+    exit 66
+  fi
+  if [[ "$#" -gt 0 ]]; then destinations=("$@"); else destinations=("$(swift build --package-path "$PROJECT_ROOT" --show-bin-path)"); fi
+  for destination in "${destinations[@]}"; do
+    mkdir -p "$destination"; cp "$MLXDLSS_METALLIB" "$destination/mlx.metallib"
+  done
+  echo "$MLXDLSS_METALLIB"
+  exit 0
+fi
+
 for command_name in cmake ninja xcrun swift; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     echo "Required command is unavailable: $command_name" >&2
@@ -23,7 +39,11 @@ if [[ ! -f "$MLX_SOURCE/CMakeLists.txt" ]]; then
   exit 66
 fi
 
-swift build --package-path "$PROJECT_ROOT" --build-tests --jobs "$BUILD_JOBS"
+if [[ -z "${MLXDLSS_SKIP_TESTS:-}" ]]; then
+  swift build --package-path "$PROJECT_ROOT" --build-tests --jobs "$BUILD_JOBS"
+else
+  swift build --package-path "$PROJECT_ROOT" --jobs "$BUILD_JOBS"     # MLXDLSS_SKIP_TESTS=1: no XCTest on Command Line Tools
+fi
 
 cmake \
   -S "$MLX_SOURCE" \

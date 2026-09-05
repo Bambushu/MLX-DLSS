@@ -164,15 +164,66 @@ class MLXDLSSFrameGeneration:
         return (stacked, cuts)
 
 
+class MLXDLSSNeuralRenderingMetal:
+    """Video-speed renderer through the Swift Metal runtime (macOS): ~17x the PyTorch path on
+    temporal video, same output within 1/255. No skin auto-mask on this path (the Metal
+    stream has no mask input yet)."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "images": ("IMAGE", {"tooltip": "a frame sequence (temporal) or independent stills"}),
+            "model_package": ("STRING", {"default": "NeuralRendering.dlssmodel", "tooltip": "from `mlxdlss-weights all`; relative paths resolve under MLXDLSS_WEIGHTS"}),
+            "mlxdlss_binary": ("STRING", {"default": "", "tooltip": "path to the built `mlxdlss` binary; empty = MLXDLSS_BINARY / PATH / the repo's .build/release"}),
+            "temporal": ("BOOLEAN", {"default": True, "tooltip": "reproject the previous output with optical flow and blend (video); off = every frame independent"}),
+            "scene_cut": ("FLOAT", {"default": 0.3, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "temporal: mean luma change that resets the history"}),
+            "profile": (list(PROFILES), {"default": "standard"}),
+            "processing_scale": ("FLOAT", {"default": 1.0, "min": 1.0, "max": 4.0, "step": 0.5, "tooltip": "temporal mode runs at the native scale (1)"}),
+            "detail_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 8.0, "step": 0.1}),
+            "colour_strength": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 4.0, "step": 0.1}),
+            "detail_radius": ("FLOAT", {"default": 4.0, "min": 0.5, "max": 32.0, "step": 0.5}),
+            "intensity": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.05}),
+            "precision": (["float16", "float32"], {"default": "float16"}),
+        }}
+
+    RETURN_TYPES = ("IMAGE", "INT")
+    RETURN_NAMES = ("images", "scene_cuts")
+    FUNCTION = "render"
+    CATEGORY = CATEGORY
+
+    def render(self, images, model_package, mlxdlss_binary, temporal, scene_cut, profile, processing_scale, detail_strength,
+               colour_strength, detail_radius, intensity, precision):
+        from mlxdlss.mlxdlss_stream import MLXDLSSStreamSession
+
+        if temporal and float(processing_scale) != 1.0:
+            raise ValueError("temporal mode runs at the native scale: set processing_scale to 1 or temporal off")
+        height, width = int(images.shape[1]), int(images.shape[2])
+        session = MLXDLSSStreamSession(
+            _path(model_package), width, height, temporal=bool(temporal), scene_cut_threshold=float(scene_cut),
+            mlxdlss=mlxdlss_binary or None, profile=profile, intensity=float(intensity), precision=precision,
+            processing_scale=float(processing_scale), detail_strength=float(detail_strength),
+            colour_strength=float(colour_strength), detail_radius=float(detail_radius),
+        )
+        try:
+            outputs = [torch.from_numpy(np.clip(session.process_frame(images[i].detach().float().clamp(0, 1).cpu().numpy()), 0, 1).astype(np.float32))
+                       for i in range(images.shape[0])]
+            cuts = int(getattr(session, "scene_cuts", 0))
+        finally:
+            session.close()
+        return (torch.stack(outputs), cuts)
+
+
 NODE_CLASS_MAPPINGS = {
     "MLXDLSSLoadRenderer": MLXDLSSLoadRenderer,
     "MLXDLSSNeuralRendering": MLXDLSSNeuralRendering,
+    "MLXDLSSNeuralRenderingMetal": MLXDLSSNeuralRenderingMetal,
     "MLXDLSSLoadFrameGen": MLXDLSSLoadFrameGen,
     "MLXDLSSFrameGeneration": MLXDLSSFrameGeneration,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "MLXDLSSLoadRenderer": "MLX-DLSS Load Neural Renderer",
     "MLXDLSSNeuralRendering": "MLX-DLSS Neural Rendering (detail + tone)",
+    "MLXDLSSNeuralRenderingMetal": "MLX-DLSS Neural Rendering VIDEO (Metal, temporal)",
     "MLXDLSSLoadFrameGen": "MLX-DLSS Load Frame Generator",
     "MLXDLSSFrameGeneration": "MLX-DLSS Frame Generation (interpolate)",
 }

@@ -19,6 +19,7 @@ Weights: `mlxdlss-weights all nvngx_dlssnr.dll weights/` and `mlxdlss-weights ex
 |---|---|---|---|
 | MLX-DLSS Load Neural Renderer | weights, device, precision | RENDERER | cached per (path, device, precision) |
 | MLX-DLSS Neural Rendering | RENDERER, IMAGE, profile, processing_scale, detail/colour/radius/intensity, auto_mask, mask_floor, mask_feather, noise_frame_index, optional MASK | IMAGE, MASK | defaults = the Krea2 still recipe (scale 2, colour 0.5, skin auto-mask); the noise index advances per frame of a batch |
+| MLX-DLSS Neural Rendering VIDEO (Metal, temporal) | IMAGE batch, model_package (.dlssmodel), binary, temporal, scene_cut, profile, scale, detail/colour/radius/intensity, precision | IMAGE, INT scene_cuts | macOS only, needs the built `mlxdlss` binary + `mlx.metallib`; ~17x the PyTorch node on video, same output within 1/255; no skin auto-mask on this path |
 | MLX-DLSS Load Frame Generator | weights, device, precision | FRAMEGEN | |
 | MLX-DLSS Frame Generation | FRAMEGEN, IMAGE batch, factor, scene_cut, batch | IMAGE, INT scene_cuts | `factor - 1` frames between each pair; pairs whose luma change exceeds `scene_cut` are held as a hard cut. Set the downstream frame rate to fps × factor for smooth motion, or keep it for slow motion |
 

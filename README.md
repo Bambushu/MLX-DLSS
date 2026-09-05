@@ -63,7 +63,11 @@ swift build -c release && scripts/prepare-mlx-metallib.sh "$(swift build -c rele
 ```
 
 The second command is required after every clean Swift build: it places
-`mlx.metallib` next to the `mlxdlss` binary. MLX is the primary backend;
+`mlx.metallib` next to the `mlxdlss` binary. Compiling that metallib needs the Metal
+compiler (full Xcode); on Command Line Tools point the script at the prebuilt one from the
+`mlx` pip wheel of the SAME version as the mlx-swift checkout (0.31.1 here):
+`MLXDLSS_METALLIB=…/site-packages/mlx/lib/mlx.metallib scripts/prepare-mlx-metallib.sh "$(swift build -c release --show-bin-path)"`
+(`MLXDLSS_SKIP_TESTS=1` skips the XCTest build the script otherwise runs). MLX is the primary backend;
 PyTorch runs the same graph on any machine; Core ML is an export with a fixed
 extent.
 

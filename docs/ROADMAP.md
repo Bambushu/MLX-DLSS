@@ -49,7 +49,7 @@ that decides whether it ships.
 - Payoff: fixes the "does nothing on soft sources" result and the game prior. Highest value,
   highest cost. Only after 2 and 4.
 
-## 7. Speed  (2-3 days)
+## 7. Speed  (2-3 days) — DONE (Metal backend built; 17x on temporal video, batching on MPS gives nothing)
 - Build the Swift/Metal backend (`swift build`, needs ninja for the metallib script) and
   benchmark 1080p video end to end; fused Metal is the author's 2x path.
 - Python: batch frames through the renderer (currently 1/frame), fp16 on MPS.

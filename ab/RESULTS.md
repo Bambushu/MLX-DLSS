@@ -157,3 +157,16 @@ ffmpeg-psnr numbers; rankings are what matter:
 - Renderer on soft H3 video (24 frames, temporal): hp on skin unchanged (2.55 vs source 2.57) —
   it adds NO skin detail on this source, only tone; the auto-mask keeps the outside texture
   (1.61 vs 1.47 unmasked, source 1.55). Flicker ratio 0.96-0.98, no shimmer.
+
+## Roadmap item 7 — speed — DONE 2026-09-05 (M5)
+- PyTorch/MPS batching: `--batch 4` = `--batch 1` (0.23 fps both at 800x1440); the graph is
+  evaluated in bounded chunks, batching buys nothing. One still: network 4.06 s, pre/post 0.1 s.
+- Swift/Metal backend built (`swift build -c release`, 136 s). Command Line Tools have no Metal
+  compiler; the prebuilt `mlx.metallib` from the `mlx==0.31.1` pip wheel (= the mlx-swift
+  checkout version) works — script now takes `MLXDLSS_METALLIB`.
+- Metal vs PyTorch(fast), same still: network 2.5 s vs 4.1 s; output mean abs diff 0.28/255.
+- **Temporal video, 24 frames 800x1440: Metal 3.85 fps vs PyTorch 0.22 fps (17x)**, output within
+  0.93/255 of the torch run, flicker ratio 0.96 vs 0.97. A 15 s clip: ~1.5 min instead of 27.
+- Frame gen: Metal 136 fps out vs 77 fps (torch) on the 15 s clip; cut gate applies (1 cut on cut12).
+- ComfyUI: `MLXDLSSNeuralRenderingMetal` node (temporal video through the Metal stream),
+  3.98 fps on the same 24 frames, within 0.96/255 of the CLI. No skin mask on the Metal path yet.
