@@ -289,7 +289,7 @@ def laplacian_loss(pred: torch.Tensor, tgt: torch.Tensor, w: torch.Tensor) -> tu
         bp = gp[i] - gp[i + 1]; bt = median3(gt[i] - gt[i + 1])
         band_l1 = band_l1 + bw[i] * ((bp - bt).abs() * w).mean()
         vp = local_energy(bp * bp, 7) - local_energy(bp, 7) ** 2; vt = local_energy(bt * bt, 7) - local_energy(bt, 7) ** 2
-        var_l1 = var_l1 + bw[i] * ((vp.clamp_min(0).sqrt() - vt.clamp_min(0).sqrt()).abs() * w).mean() * 4.0
+        var_l1 = var_l1 + bw[i] * (((vp.clamp_min(0) + 1e-6).sqrt() - (vt.clamp_min(0) + 1e-6).sqrt()).abs() * w).mean() * 4.0   # sqrt'(0)=inf blew run7 up at step ~110
     hp_p = pred - gp[1]; hp_t = tgt - gt[1]                                 # high-pass above σ=2
     luma = lambda x: x[..., :1] * 0.2126 + x[..., 1:2] * 0.7152 + x[..., 2:3] * 0.0722
     lp = luma(gt[1]); gy = lp[:, 1:, :, :] - lp[:, :-1, :, :]; gx = lp[:, :, 1:, :] - lp[:, :, :-1, :]
@@ -537,7 +537,11 @@ def cmd_train(args) -> int:
             loss = loss + args.w_temporal * t_loss; parts["temporal"] = t_loss.item()
             if disc is not None:
                 g_loss, gparts = adversarial(pred, tgt, soft, step); loss = loss + g_loss; parts.update(gparts)
-            optimizer.zero_grad(set_to_none=True); loss.backward(); torch.nn.utils.clip_grad_norm_(params, 1.0); optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+            if torch.isfinite(loss):
+                loss.backward(); torch.nn.utils.clip_grad_norm_(params, 1.0); optimizer.step()
+            else:
+                note(f"step {step}: non-finite loss, step skipped")
             if args.cosine:
                 frac = min(1.0, step / 100) if step <= 100 else 0.05 + 0.95 * 0.5 * (1 + math.cos(math.pi * (step - 100) / max(1, args.steps - 100)))
                 for group in optimizer.param_groups:
@@ -565,9 +569,12 @@ def cmd_train(args) -> int:
         if disc is not None:
             g_loss, gparts = adversarial(pred, tgt, soft, step); loss = loss + g_loss; parts.update(gparts)
         optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(params, 1.0)
-        optimizer.step()
+        if torch.isfinite(loss):
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(params, 1.0)
+            optimizer.step()
+        else:
+            note(f"step {step}: non-finite loss, step skipped")
         if step % args.log_every == 0 or step == 1:
             note(f"step {step} loss {loss.item():.4f} " + " ".join(f"{k} {v:.4f}" for k, v in parts.items()) + f" {(time.time() - started) / step:.2f}s/step")
         if step % args.eval_every == 0 or step == args.steps:
