@@ -27,3 +27,9 @@ ab/krea/*.png
 ab/ft/*/
 ab/ft/*.jpg
 weights/
+ab/**/*.mp4
+ab/**/*.png
+ab/**/*.jpg
+ab/*.log
+ab/ft/*.txt
+ab/overnight/
