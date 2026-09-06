@@ -200,6 +200,7 @@ ACT = {"pen": 0.0, "max": 0.0}
 def act_penalty() -> tuple[torch.Tensor | float, float]:
     """Sum over every E4M3 site of mean((|v| - ceil)+ / ceil)^2 since the last reset, and the max |activation|."""
     pen, amax = ACT["pen"], ACT["max"]; ACT["pen"] = 0.0; ACT["max"] = 0.0
+    amax = float(amax.item()) if torch.is_tensor(amax) else amax
     return pen, amax
 
 def trainable_pipeline(weights: Path, device: str) -> tuple[NeuralRenderingPipeline, list[torch.Tensor], dict[str, torch.Tensor]]:
@@ -208,7 +209,7 @@ def trainable_pipeline(weights: Path, device: str) -> tuple[NeuralRenderingPipel
         if torch.is_grad_enabled() and v.requires_grad:
             a = v.abs()
             ACT["pen"] = ACT["pen"] + (torch.relu(a - ACT_CEIL) / ACT_CEIL).square().mean()
-            ACT["max"] = max(ACT["max"], a.detach().max().item())
+            m = a.detach().max(); ACT["max"] = m if isinstance(ACT["max"], float) else torch.maximum(ACT["max"], m)
         return v + (orig(v) - v).detach()
     M.e4m3_round_trip = ste
     pipe = NeuralRenderingPipeline.from_safetensors(weights, device=device, precision="reference")
