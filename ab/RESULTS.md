@@ -355,3 +355,21 @@ v2 is the HONEST model: it adds ~as much as crisp on soft faces, leaves already-
 (the car) nearly alone, and flickers less (car 1.31 → 1.03). Crisp is the PUNCHY model: more bite
 everywhere, incl. content that did not need it, more flicker. Shipped both:
 `weights/dlssnr-ft-real-v2.safetensors` + `NeuralRendering-ft-real-v2.dlssmodel`.
+
+## Plan C stability ablation (2026-09-06, 260 steps each from v2, lr 3e-6, same samples)
+
+| run | terms | skipped | loss@250 | PSNR out | hp out |
+|---|---|---|---|---|---|
+| control | energy 2.0 | 0 | 0.222 | 35.36 | 3.14 |
+| band | Laplacian band L1 | 0 | 0.227 | 34.01 | 2.83 |
+| bandvar | band + variance-sqrt contrast x4 | 55 | 0.821 | 11.95 | 3.99 |
+| hinges | band + halo + mottle | 0 | 0.226 | 33.95 | 2.77 |
+| all | band + MAD contrast x4 + hinges | 0 | 0.887 | 11.62 | 3.93 |
+| hingesE | band + hinges + energy 2.0 | 0 | 0.244 | 33.64 | 3.10 |
+| all1 | band + MAD contrast x1 + hinges | 0 | 0.241 | 33.98 | 2.91 |
+
+The per-band contrast term is the destabiliser: as variance-sqrt it NaNs (sqrt'(v+1e-6)=500 on flat
+skin), as mean absolute deviation at x4 it still runs the low-pass term from 0.007 to 0.24 (tone
+runaway, no NaN). Band L1 and both hinges are harmless. **run7 = hingesE config** (band + halo +
+mottle over the proven energy 2.0, `--lap-terms band,halo,mottle`); D and E inherit it. hp-cost of
+the hinges vs control: ~1%.
