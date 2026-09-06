@@ -1,0 +1,7 @@
+07:41:19 run4: 6000 steps, crop 288, cosine, energy 2 dino 1
+11:27:56 run4 exit 0
+11:27:56 ablation run5: 2500 steps, crop 256, energy 1 dino 2
+12:58:41 run5 exit 0
+12:58:41 tail: full clips through v1 (Metal temporal)
+13:01:13 tail: v1 dial sweep on stills
+13:04:32 OVERNIGHT DONE

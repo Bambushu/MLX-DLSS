@@ -154,8 +154,10 @@ rounding) on self-supervised soft→sharp pairs from real photographs (FFHQ-1024
 sharpness + LSDIR; degradation calibrated on RealSR), loss = low-pass L1 + high-pass L1 + local
 high-pass energy + DINOv2 perceptual. `weights/dlssnr-ft-real-v1.safetensors` (and the
 `-punchy` variant) drop into every `--weights` flag and into `mlxdlss-weights mlx` for the Metal
-package. Use them on SOFT sources (AI video, phone footage) at processing scale 1; keep the stock
-weights for already-sharp stills. Numbers in `ab/RESULTS.md`.
+package. Use them on SOFT sources (AI video, phone footage) at processing scale 1, detail 1,
+colour 1 (scale 2 makes the fine-tune SOFTER, unlike stock); `-crisp` = a longer cosine-decay run
+with slightly more edge definition. Keep the stock weights (scale 2, colour 0.5) for already-sharp
+stills. Numbers in `ab/RESULTS.md`.
 
 ## ComfyUI
 

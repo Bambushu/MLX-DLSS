@@ -257,3 +257,35 @@ colour where stock greys/darkens. The raw flicker ratio (1.10-1.25) is NOT shimm
 pixels v1's temporal difference equals stock's (≤0.6/255); the extra comes from moving pixels,
 i.e. sharper detail travelling with the subject. Strips strip_*.png, side-by-side videos
 mmh3_sbs.mp4 / golf_sbs.mp4 (source | stock | v1).
+
+## Overnight queue 2026-09-06 07:41–13:04 (scripts/overnight.sh)
+### run4 — run3 recipe, 6000 steps, crop 288, cosine decay (held-out re-cropped at 288, so compare within run)
+| step | PSNR (soft 30.35) | hp (soft 2.40, target 6.42) |
+|---|---|---|
+| 1000 | 30.47 | 4.25 |
+| 2000 | 30.76 | 4.23 |
+| 3000 | 30.45 | 4.77 |
+| 4000 | 30.55 | 4.61 |
+| 5000 | 30.58 | 4.62 |
+| 6000 | 30.55 | 4.66 |
+Converged by 4000. H3 eyes at 100%: marginally crisper lashes/brows than v1, cheek equally clean.
+RealSR real pair: 28.89 dB at 4000 and 6000 (v1 29.39, LR 29.30) — slightly more sharpening
+than the real photo warrants. Shipped as **`weights/dlssnr-ft-real-v1-crisp.safetensors`** (step
+4000), replacing the run3-2500 "punchy" file (28.72 on RealSR, grainier).
+
+### run5 — ablation, DINO 2.0 / energy 1.0, 2500 steps
+PSNR 31.47→31.48 (best of any run), hp 3.23→3.26 (half of run3's). RealSR 29.47. Visibly the
+softest fine-tune: leaning on the perceptual term converges to a gentle, faithful sharpener.
+Answer: energy 2 / DINO 1 (run3/run4) is the right balance; not shipped.
+
+### Metal tails through v1
+faces 15 s (362 fr) 4.9 fps, long50s 5.7 fps, golf 5.1 fps, cut12 4.7 fps. No drift over the 15 s
+take (|v1−src| 1.41 / 1.52 / 1.56 at start / middle / end, flicker ratio 1.05–1.14). The hard cut
+(luma jump 0.275 < the renderer's 0.3 reset threshold) did NOT ghost: frame after the cut within
+2.2/255 of the source — the learned history blend rejects mismatched history by itself.
+
+### v1 dial sweep (overnight/sweep_*.jpg)
+v1 was trained at scale 1: **scale 1 is its sweet spot; scale 2 is SOFTER with v1** (opposite of
+stock). Detail 2 adds grain on cheeks; colour 0.5 vs 1 barely differs (v1 learned colour
+fidelity). **v1 recipe: `--processing-scale 1 --detail-strength 1 --colour-strength 1
+--auto-mask skin`.** Stock stays scale 2 / colour 0.5 for sharp Krea2 stills.
