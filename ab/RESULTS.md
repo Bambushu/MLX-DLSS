@@ -336,3 +336,22 @@ Static-pixel shimmer on the face drops BELOW the source at α0.7 for a 5% detail
 pixels barely change because the gate (correctly) releases where content moves. Modest, real,
 free. Recommendation: `--hp-history 0.5` for video. Default stays 0 (vendor parity). Metal path
 does not have it yet.
+
+## Panel plan A result — run6 (degrade v2, mask on degraded, from crisp, 3000 cosine) = "v2" — 2026-09-06
+Held-out (v2 degrade, incl. clean inputs): PSNR crisp 34.57 → v2 36.47 (soft 38.58); hp 3.30 → 3.04
+(target 3.63). H3 face skin hp: input 2.08, crisp 2.69, v2 2.78 (step 1500) — detail KEPT on soft
+H3. RealSR real pair: crisp 28.89 → v2-1500 29.35 (LR 29.30) — over-sharpening of real photos fixed.
+
+Six 3-5 s clips, Metal temporal (ab/clips5/*_crisp_vs_v2.mp4):
+| clip | hp src / crisp / v2 | flicker crisp / v2 |
+|---|---|---|
+| face_rain | 2.71 / 3.32 / 3.06 | 1.17 / 1.15 |
+| face_glam | 6.56 / 7.62 / 7.06 | 1.21 / 1.14 |
+| face_kitchen | 8.94 / 10.78 / 9.36 | 1.19 / 1.07 |
+| nf_loco | 7.57 / 9.88 / 9.50 | 1.17 / 1.17 |
+| nf_car (already sharp-ish) | 5.41 / 7.73 / 5.59 | 1.31 / 1.03 |
+| nf_kitchen | 5.49 / 6.81 / 6.10 | 1.16 / 1.11 |
+v2 is the HONEST model: it adds ~as much as crisp on soft faces, leaves already-sharp content
+(the car) nearly alone, and flickers less (car 1.31 → 1.03). Crisp is the PUNCHY model: more bite
+everywhere, incl. content that did not need it, more flicker. Shipped both:
+`weights/dlssnr-ft-real-v2.safetensors` + `NeuralRendering-ft-real-v2.dlssmodel`.
