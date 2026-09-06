@@ -193,9 +193,24 @@ def features_for(soft: np.ndarray, skin: np.ndarray, frame_index: int) -> np.nda
 
 # ----------------------------------------------------------------------------- model
 
+ACT_CEIL = 256.0   # E4M3 saturates at 448 and the gate multiplies in fp16; run7 (2026-09-06) walked activations to 5000+
+ACT = {"pen": 0.0, "max": 0.0}
+
+
+def act_penalty() -> tuple[torch.Tensor | float, float]:
+    """Sum over every E4M3 site of mean((|v| - ceil)+ / ceil)^2 since the last reset, and the max |activation|."""
+    pen, amax = ACT["pen"], ACT["max"]; ACT["pen"] = 0.0; ACT["max"] = 0.0
+    return pen, amax
+
 def trainable_pipeline(weights: Path, device: str) -> tuple[NeuralRenderingPipeline, list[torch.Tensor], dict[str, torch.Tensor]]:
     orig = M.e4m3_round_trip
-    M.e4m3_round_trip = lambda v: v + (orig(v) - v).detach()   # straight-through estimator
+    def ste(v):                                            # straight-through estimator + FP8 envelope barrier
+        if torch.is_grad_enabled() and v.requires_grad:
+            a = v.abs()
+            ACT["pen"] = ACT["pen"] + (torch.relu(a - ACT_CEIL) / ACT_CEIL).square().mean()
+            ACT["max"] = max(ACT["max"], a.detach().max().item())
+        return v + (orig(v) - v).detach()
+    M.e4m3_round_trip = ste
     pipe = NeuralRenderingPipeline.from_safetensors(weights, device=device, precision="reference")
     names = {attr: name for name, attr in pipe.model._weight_attributes.items()}
     params, by_name = [], {}
@@ -542,6 +557,7 @@ def cmd_train(args) -> int:
             head = pipe.model(feats).float()
             pred = compose(head, soft)
             loss, parts = loss_fn(pred, tgt, skin, weights, dino)
+            act, amax = act_penalty(); loss = loss + args.w_act * act; parts["act"] = float(act.detach()) if torch.is_tensor(act) else act; parts["amax"] = amax
             n = args.batch
             t_loss = temporal_loss(pred[:n], pred[n:], grid.to(args.device), torch.from_numpy(valid).to(args.device))
             loss = loss + args.w_temporal * t_loss; parts["temporal"] = t_loss.item()
@@ -580,6 +596,7 @@ def cmd_train(args) -> int:
         head = pipe.model(feats).float()
         pred = compose(head, soft)
         loss, parts = loss_fn(pred, tgt, skin, weights, dino)
+        act, amax = act_penalty(); loss = loss + args.w_act * act; parts["act"] = float(act.detach()) if torch.is_tensor(act) else act; parts["amax"] = amax
         if disc is not None:
             g_loss, gparts = adversarial(pred, tgt, soft, step); loss = loss + g_loss; parts.update(gparts)
         optimizer.zero_grad(set_to_none=True)
@@ -636,6 +653,7 @@ def main() -> int:
     t.add_argument("--lap-contrast", type=float, default=1.0, help="multiplier on the per-band contrast term inside --w-lap")
     t.add_argument("--w-lap", type=float, default=0.0, help="multi-scale Laplacian + variance + anti-halo/anti-mottle hinges (plan C); use with --w-energy 0")
     t.add_argument("--lap-terms", default="band,var,halo,mottle", help="which plan-C sub-terms are active (ablation)")
+    t.add_argument("--w-act", type=float, default=10.0, help="FP8 envelope barrier: penalty on |activation| above 256 at every E4M3 site (0 = off)")
     t.add_argument("--w-temporal", type=float, default=0.0, help="plan D: synthetic-flow two-frame consistency on the high-pass (0 = off); doubles the forward cost")
     t.add_argument("--w-adv", type=float, default=0.0, help="plan E: band-limited PatchGAN hinge weight on the generator (0 = off; start 0.005)")
     t.add_argument("--w-fm", type=float, default=1.0, help="plan E: discriminator feature-matching weight")
