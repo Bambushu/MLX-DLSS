@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import math
 import json
 import os
 import random
@@ -202,6 +203,60 @@ class DinoPerceptual:
         return (1 - torch.nn.functional.cosine_similarity(fp, ft, dim=-1)).mean()
 
 
+_gauss_cache: dict = {}
+
+
+def gauss(x: torch.Tensor, sigma: float) -> torch.Tensor:
+    """Separable gaussian blur of an NHWC tensor (reflect padding)."""
+    key = (sigma, x.device.type)
+    if key not in _gauss_cache:
+        r = int(math.ceil(3 * sigma)); t = torch.arange(-r, r + 1, dtype=torch.float32)
+        k = torch.exp(-t * t / (2 * sigma * sigma)); k = (k / k.sum()).to(x.device)
+        _gauss_cache[key] = k
+    k = _gauss_cache[key]; r = (k.numel() - 1) // 2
+    c = x.shape[-1]
+    y = x.permute(0, 3, 1, 2)
+    y = torch.nn.functional.pad(y, (r, r, r, r), mode="reflect")
+    y = torch.nn.functional.conv2d(y, k.view(1, 1, 1, -1).repeat(c, 1, 1, 1), groups=c)
+    y = torch.nn.functional.conv2d(y, k.view(1, 1, -1, 1).repeat(c, 1, 1, 1), groups=c)
+    return y.permute(0, 2, 3, 1)
+
+
+def median3(x: torch.Tensor) -> torch.Tensor:
+    """3x3 median of an NHWC tensor (removes residual codec speckle from the target bands)."""
+    y = torch.nn.functional.pad(x.permute(0, 3, 1, 2), (1, 1, 1, 1), mode="reflect")
+    patches = y.unfold(2, 3, 1).unfold(3, 3, 1).reshape(*y.shape[:2], x.shape[1], x.shape[2], 9)
+    return patches.median(-1).values.permute(0, 2, 3, 1)
+
+
+def laplacian_loss(pred: torch.Tensor, tgt: torch.Tensor, w: torch.Tensor) -> tuple[torch.Tensor, dict]:
+    """Panel plan C. Three Laplacian bands (σ 1-2, 2-4, 4-8) matched by L1 AND by 7x7 local variance
+    (the contrast of the band, i.e. how real the detail feels), finer bands weighted higher, target
+    bands median-filtered; plus an anti-halo hinge (no MORE high-pass than the target inside a
+    5 px ring around strong low-pass edges) and an anti-mottle hinge (no high-pass where the target
+    is flat). Replaces the single-scale 7x7 energy term."""
+    sig = [1.0, 2.0, 4.0]; bw = [2.0, 1.5, 1.0]
+    gp = [gauss(pred, s) for s in sig] + [gauss(pred, 8.0)]
+    gt = [gauss(tgt, s) for s in sig] + [gauss(tgt, 8.0)]
+    band_l1 = pred.new_zeros(()); var_l1 = pred.new_zeros(())
+    for i in range(3):
+        bp = gp[i] - gp[i + 1]; bt = median3(gt[i] - gt[i + 1])
+        band_l1 = band_l1 + bw[i] * ((bp - bt).abs() * w).mean()
+        vp = local_energy(bp * bp, 7) - local_energy(bp, 7) ** 2; vt = local_energy(bt * bt, 7) - local_energy(bt, 7) ** 2
+        var_l1 = var_l1 + bw[i] * ((vp.clamp_min(0).sqrt() - vt.clamp_min(0).sqrt()).abs() * w).mean() * 4.0
+    hp_p = pred - gp[1]; hp_t = tgt - gt[1]                                 # high-pass above σ=2
+    luma = lambda x: x[..., :1] * 0.2126 + x[..., 1:2] * 0.7152 + x[..., 2:3] * 0.0722
+    lp = luma(gt[1]); gy = lp[:, 1:, :, :] - lp[:, :-1, :, :]; gx = lp[:, :, 1:, :] - lp[:, :, :-1, :]
+    grad = torch.zeros_like(lp); grad[:, 1:, :, :] += gy.abs(); grad[:, :, 1:, :] += gx.abs()
+    edge = (grad > 0.08).float()
+    edge = torch.nn.functional.max_pool2d(edge.permute(0, 3, 1, 2), 11, stride=1, padding=5).permute(0, 2, 3, 1)
+    halo = (torch.relu(hp_p.abs() - hp_t.abs()) * edge).mean() * 2.0
+    flat = (hp_t.abs() < 0.008).float()
+    mottle = (torch.relu(hp_p.abs() - 0.008) * flat).mean() * 1.0
+    total = band_l1 + var_l1 + halo + mottle
+    return total, {"lap": band_l1.item(), "lvar": var_l1.item(), "halo": halo.item(), "mottle": mottle.item()}
+
+
 def loss_fn(pred: torch.Tensor, tgt: torch.Tensor, skin: torch.Tensor, weights: dict | None = None, dino: "DinoPerceptual | None" = None) -> tuple[torch.Tensor, dict]:
     """Colour fidelity on the low-pass, a weak pixel term on the high-pass, and a strong match of
     local high-pass ENERGY (so the network is rewarded for the right amount of texture rather
@@ -214,6 +269,8 @@ def loss_fn(pred: torch.Tensor, tgt: torch.Tensor, skin: torch.Tensor, weights: 
     energy = ((local_energy(hp_p) - local_energy(hp_t)).abs() * w).mean()
     total = weights["low"] * low + weights["hp"] * hp + weights["energy"] * energy
     parts = {"low": low.item(), "hp": hp.item(), "energy": energy.item()}
+    if weights.get("lap", 0) > 0:
+        lap, lparts = laplacian_loss(pred, tgt, w); total = total + weights["lap"] * lap; parts.update(lparts)
     if dino is not None and weights.get("dino", 0) > 0:
         d = dino(pred, tgt); total = total + weights["dino"] * d; parts["dino"] = d.item()
     return total, parts
@@ -352,7 +409,7 @@ def cmd_train(args) -> int:
     masker = SkinMasker(device=args.device)
     pairs = Pairs(train_paths, args.crop, masker, seed=args.seed, degrade_version=args.degrade, mask_on_degraded=not args.mask_on_sharp)
     optimizer = torch.optim.AdamW(params, lr=args.lr, weight_decay=0.0, betas=(0.9, 0.99))
-    weights = {"low": args.w_low, "hp": args.w_hp, "energy": args.w_energy, "dino": args.w_dino}
+    weights = {"low": args.w_low, "hp": args.w_hp, "energy": args.w_energy, "dino": args.w_dino, "lap": args.w_lap}
     dino = DinoPerceptual(args.device) if args.w_dino > 0 else None
     log = open(out / "train.log", "a")
     def note(msg: str) -> None:
@@ -422,6 +479,7 @@ def main() -> int:
     t.add_argument("--mask-on-sharp", action="store_true", help="compute the skin mask on the sharp target (runs 1-5) instead of the degraded input")
     t.add_argument("--w-low", type=float, default=1.0); t.add_argument("--w-hp", type=float, default=0.5)
     t.add_argument("--w-energy", type=float, default=4.0); t.add_argument("--w-dino", type=float, default=0.0, help="DINOv2 perceptual weight (0 = off)")
+    t.add_argument("--w-lap", type=float, default=0.0, help="multi-scale Laplacian + variance + anti-halo/anti-mottle hinges (plan C); use with --w-energy 0")
     e = sub.add_parser("eval"); e.add_argument("--dataset", required=True); e.add_argument("--weights", required=True); e.add_argument("--weights2", default=None)
     e.add_argument("--n", type=int, default=24); e.add_argument("--crop", type=int, default=256); e.add_argument("--holdout", type=int, default=12); e.add_argument("--device", default="mps")
     args = p.parse_args()
