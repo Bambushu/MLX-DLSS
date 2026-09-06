@@ -373,3 +373,18 @@ skin), as mean absolute deviation at x4 it still runs the low-pass term from 0.0
 runaway, no NaN). Band L1 and both hinges are harmless. **run7 = hingesE config** (band + halo +
 mottle over the proven energy 2.0, `--lap-terms band,halo,mottle`); D and E inherit it. hp-cost of
 the hinges vs control: ~1%.
+
+### Why plan C kept diverging: activation blow-up, not weights (2026-09-06)
+
+run7 (hingesE config) collapsed between step 600 and 625 with FINITE gradients (first non-finite
+grad at 689). Weight deltas step500→1000 are ≤ 1 fp16 ulp per element, yet the step-1000 weights
+render garbage (PSNR 12 vs input). Spying every E4M3 rounding site: v2 / step500 peak |activation|
+≈ 100; step1000 peaks at 5138 with 667 of 1476 sites saturated at the E4M3 max (448). The gate
+multiplies in fp16 and the round trip clamps overflow silently, so the network keeps a finite loss
+while producing nonsense. Nothing in the loss kept activations inside the FP8 envelope; a loss that
+pushes contrast (energy + lap) walks them off the cliff, faster the harder it pushes (bandvar x4
+~150 steps, MAD x4 ~200, hingesE ~600).
+
+Fix: `--w-act` (default 10) = at every E4M3 site, mean((|v|-256)+/256)^2, summed. Reads 0.0 on v2
+(amax 89) and 1037 on the broken checkpoint. run7 relaunched from v2 with hingesE + barrier; the
+`act`/`amax` columns are in the log. Diverged run kept at ab/ft/run7_diverged.
