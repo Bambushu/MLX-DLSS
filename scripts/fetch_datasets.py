@@ -34,7 +34,7 @@ def fetch_ffhq(root: Path, shards: int) -> None:
                 if member.isfile() and member.name.endswith(".webp"):
                     (out / Path(member.name).name).write_bytes(tar.extractfile(member).read()); n += 1
         print(f"ffhq {name}: {n} images", flush=True)
-        Path(path).unlink(missing_ok=True)
+        Path(path).resolve().unlink(missing_ok=True); Path(path).unlink(missing_ok=True)
 
 
 def fetch_lsdir(root: Path, shards: int) -> None:
@@ -55,7 +55,7 @@ def fetch_lsdir(root: Path, shards: int) -> None:
             img = row["image"]; data = img["bytes"] if isinstance(img, dict) else img
             stem = Path(row["path"]).stem
             (out / f"{stem}.png").write_bytes(data); n += 1
-        marker.touch(); Path(path).unlink(missing_ok=True)
+        marker.touch(); Path(path).resolve().unlink(missing_ok=True); Path(path).unlink(missing_ok=True)
         print(f"lsdir shard {i}: {n} images >= 768px", flush=True)
 
 
@@ -67,7 +67,7 @@ def fetch_realsr(root: Path) -> None:
     with tarfile.open(path) as tar:
         tar.extractall(out, filter="data")
     print(f"realsr: extracted {sum(1 for _ in out.rglob('*.png'))} pngs", flush=True)
-    Path(path).unlink(missing_ok=True)
+    Path(path).resolve().unlink(missing_ok=True); Path(path).unlink(missing_ok=True)
 
 
 def _fetch_zip(root: Path, repo: str, filename: str, sub: str, max_side: int | None) -> None:
@@ -96,7 +96,7 @@ def _fetch_zip(root: Path, repo: str, filename: str, sub: str, max_side: int | N
             im.save(target, compress_level=1); n += 1
             if n % 200 == 0:
                 print(f"{sub}: {n} images", flush=True)
-    marker.touch(); Path(path).unlink(missing_ok=True)
+    marker.touch(); Path(path).resolve().unlink(missing_ok=True); Path(path).unlink(missing_ok=True)
     print(f"{sub}: {n} images", flush=True)
 
 
