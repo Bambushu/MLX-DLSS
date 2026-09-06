@@ -295,7 +295,12 @@ def cmd_train(args) -> int:
     base_eval = evaluate(pipe, hold_paths, masker, args.crop, args.eval_n, args.device)
     note(f"step 0 eval {json.dumps({k: round(v, 3) for k, v in base_eval.items()})}")
     started = time.time()
+    import math
     for step in range(1, args.steps + 1):
+        if args.cosine:                                    # 100-step warmup, cosine to 5% of the base lr
+            frac = min(1.0, step / 100) if step <= 100 else 0.05 + 0.95 * 0.5 * (1 + math.cos(math.pi * (step - 100) / max(1, args.steps - 100)))
+            for group in optimizer.param_groups:
+                group["lr"] = args.lr * frac
         batch = [pairs.sample() for _ in range(args.batch)]
         feats = torch.from_numpy(np.stack([features_for(s, k, step * args.batch + i) for i, (s, _, k) in enumerate(batch)])).to(args.device)
         soft = torch.from_numpy(np.stack([b[0] for b in batch])).to(args.device)
@@ -340,6 +345,7 @@ def main() -> int:
     t.add_argument("--lr", type=float, default=2e-5); t.add_argument("--seed", type=int, default=0); t.add_argument("--holdout", type=int, default=12)
     t.add_argument("--eval-every", type=int, default=250); t.add_argument("--eval-n", type=int, default=24); t.add_argument("--log-every", type=int, default=25)
     t.add_argument("--device", default="mps")
+    t.add_argument("--cosine", action="store_true", help="100-step warmup then cosine decay of the learning rate to 5%%")
     t.add_argument("--w-low", type=float, default=1.0); t.add_argument("--w-hp", type=float, default=0.5)
     t.add_argument("--w-energy", type=float, default=4.0); t.add_argument("--w-dino", type=float, default=0.0, help="DINOv2 perceptual weight (0 = off)")
     e = sub.add_parser("eval"); e.add_argument("--dataset", required=True); e.add_argument("--weights", required=True); e.add_argument("--weights2", default=None)
