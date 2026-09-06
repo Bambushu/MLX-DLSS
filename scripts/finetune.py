@@ -276,10 +276,11 @@ def median3(x: torch.Tensor) -> torch.Tensor:
 
 
 LAP_TERMS = {"band", "var", "halo", "mottle"}
+LAP_CONTRAST = 1.0   # weight of the per-band contrast (MAD) term; 4.0 diverged in the 2026-09-06 ablation
 
 
 def laplacian_loss(pred: torch.Tensor, tgt: torch.Tensor, w: torch.Tensor) -> tuple[torch.Tensor, dict]:
-    """Panel plan C. Three Laplacian bands (σ 1-2, 2-4, 4-8) matched by L1 AND by 7x7 local variance
+    """Panel plan C. Three Laplacian bands (σ 1-2, 2-4, 4-8) matched by L1 AND by 7x7 local mean absolute deviation
     (the contrast of the band, i.e. how real the detail feels), finer bands weighted higher, target
     bands median-filtered; plus an anti-halo hinge (no MORE high-pass than the target inside a
     5 px ring around strong low-pass edges) and an anti-mottle hinge (no high-pass where the target
@@ -291,8 +292,10 @@ def laplacian_loss(pred: torch.Tensor, tgt: torch.Tensor, w: torch.Tensor) -> tu
     for i in range(3):
         bp = gp[i] - gp[i + 1]; bt = median3(gt[i] - gt[i + 1])
         band_l1 = band_l1 + bw[i] * ((bp - bt).abs() * w).mean()
-        vp = local_energy(bp * bp, 7) - local_energy(bp, 7) ** 2; vt = local_energy(bt * bt, 7) - local_energy(bt, 7) ** 2
-        var_l1 = var_l1 + bw[i] * (((vp.clamp_min(0) + 1e-6).sqrt() - (vt.clamp_min(0) + 1e-6).sqrt()).abs() * w).mean() * 4.0   # sqrt'(0)=inf blew run7 up at step ~110
+        # local contrast of the band = 7x7 mean absolute deviation (bounded gradient). The variance-sqrt
+        # form diverged (ablation 2026-09-06: sqrt'(v+1e-6) = 500 on the near-zero bands of flat skin).
+        vp = local_energy(bp.abs(), 7); vt = local_energy(bt.abs(), 7)
+        var_l1 = var_l1 + bw[i] * ((vp - vt).abs() * w).mean() * LAP_CONTRAST
     hp_p = pred - gp[1]; hp_t = tgt - gt[1]                                 # high-pass above σ=2
     luma = lambda x: x[..., :1] * 0.2126 + x[..., 1:2] * 0.7152 + x[..., 2:3] * 0.0722
     lp = luma(gt[1]); gy = lp[:, 1:, :, :] - lp[:, :-1, :, :]; gx = lp[:, :, 1:, :] - lp[:, :, :-1, :]
@@ -497,7 +500,7 @@ def cmd_train(args) -> int:
     pairs = Pairs(train_paths, args.crop, masker, seed=args.seed, degrade_version=args.degrade, mask_on_degraded=not args.mask_on_sharp)
     optimizer = torch.optim.AdamW(params, lr=args.lr, weight_decay=0.0, betas=(0.9, 0.99))
     weights = {"low": args.w_low, "hp": args.w_hp, "energy": args.w_energy, "dino": args.w_dino, "lap": args.w_lap}
-    global LAP_TERMS; LAP_TERMS = set(t for t in args.lap_terms.split(",") if t)
+    global LAP_TERMS, LAP_CONTRAST; LAP_TERMS = set(t for t in args.lap_terms.split(",") if t); LAP_CONTRAST = args.lap_contrast
     dino = DinoPerceptual(args.device) if args.w_dino > 0 else None
     disc = None
     if args.w_adv > 0:
@@ -630,6 +633,7 @@ def main() -> int:
     t.add_argument("--mask-on-sharp", action="store_true", help="compute the skin mask on the sharp target (runs 1-5) instead of the degraded input")
     t.add_argument("--w-low", type=float, default=1.0); t.add_argument("--w-hp", type=float, default=0.5)
     t.add_argument("--w-energy", type=float, default=4.0); t.add_argument("--w-dino", type=float, default=0.0, help="DINOv2 perceptual weight (0 = off)")
+    t.add_argument("--lap-contrast", type=float, default=1.0, help="multiplier on the per-band contrast term inside --w-lap")
     t.add_argument("--w-lap", type=float, default=0.0, help="multi-scale Laplacian + variance + anti-halo/anti-mottle hinges (plan C); use with --w-energy 0")
     t.add_argument("--lap-terms", default="band,var,halo,mottle", help="which plan-C sub-terms are active (ablation)")
     t.add_argument("--w-temporal", type=float, default=0.0, help="plan D: synthetic-flow two-frame consistency on the high-pass (0 = off); doubles the forward cost")
