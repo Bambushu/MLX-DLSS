@@ -1,0 +1,14 @@
+[project]
+name = "comfyui-mlx-dlss"
+description = "DLSS 5 neural renderer (with skin auto-mask) and DLSS frame generation (with scene-cut gate) as ComfyUI nodes; PyTorch on any device, Metal on Apple Silicon."
+version = "0.2.0"
+license = { text = "Apache-2.0" }
+dependencies = ["mlxdlss[mask,video]"]
+
+[project.urls]
+Repository = "https://github.com/Bambushu/MLX-DLSS"
+
+[tool.comfy]
+PublisherId = "bambushu"
+DisplayName = "MLX-DLSS"
+Icon = ""

@@ -29,6 +29,23 @@ Nothing proprietary is included, downloaded or redistributed.
 with or endorsed by NVIDIA. DLSS Super Resolution was measured and
 deliberately left out: without engine motion vectors it loses to plain Lanczos.
 
+## This fork (Bambushu/MLX-DLSS)
+
+Everything upstream, plus what was needed to use the two networks on real and AI footage:
+
+- **Fine-tuned renderer weights** (`scripts/finetune.py`): the recovered graph trains as-is; the
+  stock weights add pores only to already-sharp stills, the fine-tunes add them to soft sources
+  (AI video, phone footage). Section below.
+- **Skin auto-mask** (`--auto-mask skin`): face parsing fills the network's per-pixel skin channels,
+  so skin detail lands on skin and hair/background keep their own texture.
+- **Scene-cut gate** for frame generation and the temporal renderer (`--scene-cut`): a hard cut is
+  held instead of blended.
+- **High-pass history blend** (`--hp-history 0.5`) for video: removes static shimmer at ~5% detail.
+- **ComfyUI node pack** (`comfyui/ComfyUI-MLX-DLSS`, five nodes + example workflows).
+- **Metal backend on Command Line Tools** (prebuilt metallib), 17x the PyTorch path on video.
+- **`scripts/validate.py`**: withheld-frame PSNR against RIFE 4.7 / 4.26 / minterpolate, renderer
+  sharpness and static-vs-moving flicker. Every number is in `ab/RESULTS.md`.
+
 ![Input, default strength, processing scale 2 with detail 2](docs/assets/neural-rendering-control.png)
 
 Neural rendering on a 1408×1600 game render, 1:1 crop: input, defaults, `--processing-scale 2 --detail-strength 2`.
@@ -49,7 +66,7 @@ Frame generation: even frames in, generated frames out, the withheld frames for 
 
 | network | source file | command | output |
 | --- | --- | --- | --- |
-| neural rendering | `nvngx_dlssnr.dll` (file version 310.8.0.0, SHA-256 `ceb6432f…2650`) | `mlxdlss-weights all nvngx_dlssnr.dll weights/ [--coreml 320x320]` | `weights/dlssnr-weights-logical.safetensors` (PyTorch), `weights/NeuralRendering.dlssmodel` (Metal), `weights/NeuralRendering-WxH-float16.mlpackage` (Core ML) |
+| neural rendering | `nvngx_dlssnr.dll` (file version 310.8.0.0, SHA-256 `ceb6432f…2650`; the `e16bcf15…` build of the same version extracts identically, 649 tensors) | `mlxdlss-weights all nvngx_dlssnr.dll weights/ [--coreml 320x320]` | `weights/dlssnr-weights-logical.safetensors` (PyTorch), `weights/NeuralRendering.dlssmodel` (Metal), `weights/NeuralRendering-WxH-float16.mlpackage` (Core ML) |
 | frame generation | `libnvidia-ngx-dlssg.so.310.7.0` (DLSS SDK 310.7.0) | `mlxdlss-weights extract-fg libnvidia-ngx-dlssg.so.310.7.0 weights/framegen.safetensors` | `weights/framegen.safetensors` (both backends) |
 
 `mlxdlss-weights sha256 FILE` reports whether a DLL is a known checkpoint;
@@ -149,15 +166,26 @@ the comparison clip and the folder.
 
 ## Fine-tuned weights (this fork)
 
-`scripts/finetune.py` trains the recovered graph as-is (straight-through estimator on the E4M3
-rounding) on self-supervised soft→sharp pairs from real photographs (FFHQ-1024 filtered for
-sharpness + LSDIR; degradation calibrated on RealSR), loss = low-pass L1 + high-pass L1 + local
-high-pass energy + DINOv2 perceptual. `weights/dlssnr-ft-real-v1-crisp.safetensors` (default; `dlssnr-ft-real-v1.safetensors` is
-the more conservative run) drop into every `--weights` flag and into `mlxdlss-weights mlx` for the Metal
-package. Use them on SOFT sources (AI video, phone footage) at processing scale 1, detail 1,
-colour 1 (scale 2 makes the fine-tune SOFTER, unlike stock); `-crisp` = a longer cosine-decay run
-with slightly more edge definition. Keep the stock weights (scale 2, colour 0.5) for already-sharp
-stills. Numbers in `ab/RESULTS.md`.
+`scripts/finetune.py` trains the recovered graph as-is: a straight-through estimator on every
+E4M3 rounding, an FP8 envelope barrier that keeps activations inside the range the network was
+shipped for, self-supervised soft→sharp pairs from real photographs (FFHQ-1024 filtered for
+sharpness + LSDIR, degradation = x264/JPEG/phone-noise mixture calibrated on real H3 frames and
+RealSR), loss = low-pass L1 + high-pass L1 + local high-pass energy + DINOv2 perceptual, with
+optional multi-scale Laplacian + anti-halo/anti-mottle hinges, synthetic-flow temporal consistency
+and a band-limited PatchGAN (`--w-lap`, `--w-temporal`, `--w-adv`).
+
+| weights | character | use |
+| --- | --- | --- |
+| `dlssnr-ft-real-v2` | honest: same detail on soft faces, leaves sharp content alone, least flicker | default for video |
+| `dlssnr-ft-real-v1-crisp` | punchy: more edge definition, a little more shimmer | stills, or when v2 reads too soft |
+| `dlssnr-ft-real-v1` | conservative first run | reference |
+
+They drop into every `--weights` flag and into `mlxdlss-weights mlx` for the Metal package.
+Recipe for soft sources: processing scale 1, detail 1, colour 1, `--auto-mask skin`, and
+`--hp-history 0.5` on video (scale 2 makes the fine-tunes SOFTER, unlike stock). Keep the stock
+weights (scale 2, colour 0.5) for already-sharp stills. The weights are derived from the vendor's
+and are not in this repository. `scripts/finetune.py build|train|eval|calibrate` reproduces them
+from your own extraction (`scripts/fetch_datasets.py` pulls the datasets).
 
 ## ComfyUI
 
@@ -175,6 +203,8 @@ frame generation with the scene-cut gate) and ships `example_workflows/`. See it
 | `--control-mask rgb.f32` | none | red: blend, green: tone, blue: structure, per pixel |
 | `--auto-mask skin`, `--mask-floor 0–1`, `--mask-feather px` | `none`, `0`, `8` | face-parsing model (`pip install './python[mask]'`) fills the network's skin/automatic-mask channels per pixel, so the skin-specific detail lands on face skin and hair/background keep their own texture; floor = mask value outside skin; `--save-mask` writes it. Also on `mlxdlss-video convert` (torch backend) |
 | `--noise-frame-index` | `0` | deterministic noise seed; sessions advance it per frame |
+| `--hp-history 0–1` (video, `--temporal`) | `0` | photometrically gated blend of the previous output's high-pass into the current one: 0.5–0.7 removes static shimmer for ~5% detail; a pixel that changed more than 15/255 gets no history |
+| `--noise-mode fresh\|frozen\|zero\|advected` (video) | `fresh` | how the noise channels evolve per frame; measured a no-op on the recovered graph, kept for experiments |
 
 ## Python API
 
