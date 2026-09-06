@@ -388,3 +388,9 @@ pushes contrast (energy + lap) walks them off the cliff, faster the harder it pu
 Fix: `--w-act` (default 10) = at every E4M3 site, mean((|v|-256)+/256)^2, summed. Reads 0.0 on v2
 (amax 89) and 1037 on the broken checkpoint. run7 relaunched from v2 with hingesE + barrier; the
 `act`/`amax` columns are in the log. Diverged run kept at ab/ft/run7_diverged.
+
+**2026-09-06 21:05 the Mac hard-rebooted** with the dense barrier (an extra activation-sized tensor
+retained at all 1476 sites) plus the test suite running beside training. Now: barrier on every
+20th site, crop 256, a memory watchdog in the script (`--min-free-pct 12 --max-swap-gb 16` →
+save + exit 3), and nothing else heavy beside a training run. Measured healthy regime for run7:
+trainer footprint 12 GB, free 67%, swap 2 GB, 2.6 s/step.
