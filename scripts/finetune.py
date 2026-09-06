@@ -196,7 +196,6 @@ def features_for(soft: np.ndarray, skin: np.ndarray, frame_index: int) -> np.nda
 
 ACT_CEIL = 256.0   # E4M3 saturates at 448 and the gate multiplies in fp16; run7 (2026-09-06) walked activations to 5000+
 ACT = {"pen": 0.0, "max": 0.0, "i": 0}
-ACT_EVERY = 20     # penalise every 20th E4M3 site (~74 of 1476); all 1476 retained an extra activation each and rebooted the Mac 2026-09-06
 
 
 def free_percent() -> float:
@@ -224,10 +223,10 @@ def trainable_pipeline(weights: Path, device: str, train_pattern: str | None = N
     orig = M.e4m3_round_trip
     def ste(v):                                            # straight-through estimator + FP8 envelope barrier
         if torch.is_grad_enabled() and v.requires_grad:
-            m = v.detach().abs().max(); ACT["max"] = m if isinstance(ACT["max"], float) else torch.maximum(ACT["max"], m)
-            ACT["i"] += 1
-            if ACT["i"] % ACT_EVERY == 0:                 # sparse: the barrier graph keeps an activation-sized tensor per site
-                ACT["pen"] = ACT["pen"] + (torch.relu(v.abs() - ACT_CEIL) / ACT_CEIL).square().mean()
+            f = v.reshape(v.shape[0], -1)                  # per-sample max/min: autograd keeps only the argmax indices, not the activation
+            hi = f.max(1).values; lo = f.min(1).values     # (abs() would save the whole tensor for its sign)
+            ACT["pen"] = ACT["pen"] + ((torch.relu(hi - ACT_CEIL) + torch.relu(-lo - ACT_CEIL)) / ACT_CEIL).square().mean()
+            m = torch.maximum(hi.detach().max(), -lo.detach().min()); ACT["max"] = m if isinstance(ACT["max"], float) else torch.maximum(ACT["max"], m)
         return v + (orig(v) - v).detach()
     M.e4m3_round_trip = ste
     pipe = NeuralRenderingPipeline.from_safetensors(weights, device=device, precision="reference")
