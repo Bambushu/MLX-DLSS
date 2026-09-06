@@ -536,11 +536,14 @@ def cmd_train(args) -> int:
     pairs = Pairs(train_paths, args.crop, masker, seed=args.seed, degrade_version=args.degrade, mask_on_degraded=not args.mask_on_sharp)
     optimizer = torch.optim.AdamW(params, lr=args.lr, weight_decay=0.0, betas=(0.9, 0.99))
     ema = {name: t.detach().clone() for name, t in by_name.items()} if args.ema > 0 else None
+    ema_steps = [0]
     def ema_update():
         if ema is None: return
+        ema_steps[0] += 1
+        d = min(args.ema, (1 + ema_steps[0]) / (10 + ema_steps[0]))   # warm-up: 0.1 -> args.ema, so a short run's tail still registers
         with torch.no_grad():
             for name, t in by_name.items():
-                ema[name].mul_(args.ema).add_(t.detach(), alpha=1 - args.ema)
+                ema[name].mul_(d).add_(t.detach(), alpha=1 - d)
     weights = {"low": args.w_low, "hp": args.w_hp, "energy": args.w_energy, "dino": args.w_dino, "lap": args.w_lap}
     global LAP_TERMS, LAP_CONTRAST; LAP_TERMS = set(t for t in args.lap_terms.split(",") if t); LAP_CONTRAST = args.lap_contrast
     dino = DinoPerceptual(args.device) if args.w_dino > 0 else None

@@ -394,3 +394,15 @@ retained at all 1476 sites) plus the test suite running beside training. Now: ba
 20th site, crop 256, a memory watchdog in the script (`--min-free-pct 12 --max-swap-gb 16` →
 save + exit 3), and nothing else heavy beside a training run. Measured healthy regime for run7:
 trainer footprint 12 GB, free 67%, swap 2 GB, 2.6 s/step.
+
+### Panel round 2 (2026-09-06 evening, docs/research/best-weights-panel.md: MiniMax M3, Kimi K3, DeepSeek V4 Pro)
+Taken: lr sweep narrowed to 3e-6 / 6e-6 / 1e-5 + late-blocks (1e-6 dropped); EMA with warm-up decay
+(0.1→0.999) and soups of the last checkpoints; IQA metrics are for SELECTION only, never a loss;
+a real H3 held-out set (ab/ft/h3frames + ab/clips12) is the arbiter. To audit before the final run:
+(a) the fp16 save vs the live fp32 model (eval the saved checkpoint, compare with the logged eval),
+(b) the Metal package (.dlssmodel) vs torch on the same frame for a fine-tune, so the fine-tune is
+not lost to E4M3 packing, (c) which of the 141 frozen tensors matter. Deferred: bigger crops (288
+already swaps on 51 GB), real H3 crops with no reconstruction loss (needs the GAN), training
+through the history blend (after plan D), directional edge-annulus halo term (C says drop hinges;
+decide on run7's eval). Panel is split on late-blocks-only and on the GAN; both stay in the plan as
+measured runs.

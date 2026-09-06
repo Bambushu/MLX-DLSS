@@ -8,7 +8,7 @@ run(){ name=$1; shift; rm -rf ab/ft/sw_$name; mkdir -p ab/ft/sw_$name
   $PY scripts/finetune.py train $COMMON --out ab/ft/sw_$name "$@" > ab/ft/sw_$name/stdout.log 2>&1
   echo "$(date '+%H:%M:%S') $name exit $? | $(grep -c skipped ab/ft/sw_$name/stdout.log) skipped | $(grep 'step 800 eval' ab/ft/sw_$name/stdout.log | cut -c1-100)"; }
 run control --lr 3e-6
-run lr1e6   --lr 1e-6
+run lr6e6   --lr 6e-6
 run lr1e5   --lr 1e-5
 run late    --lr 3e-6 --train-blocks 'block([3-6][0-9]|70)\.'
 echo "SWEEP DONE"
