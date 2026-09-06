@@ -58,3 +58,19 @@ that decides whether it ships.
 ## Deferred / rejected
 - Redoing the reverse engineering: no. The recovered graphs are the asset.
 - Super resolution: the author's measurement stands (loses to Lanczos); we upscale with LTX-2.5.
+
+## 8. Best-possible fine-tune before any weights ship (Mike 2026-09-06: "not shipping asap, the best product")
+Order = build order; every step logs to `ab/RESULTS.md`.
+- **Loss (plan C/D/E chain, running):** multi-scale Laplacian + anti-halo/anti-mottle hinges over the
+  energy term, FP8 envelope barrier; then synthetic-flow temporal consistency; then band-limited GAN.
+- **Data (fetching):** all 70 FFHQ-1024 shards (was 12), LSDIR 40 shards (was 10), Flickr2K, DIV8K at
+  ≤3072 px. Sharpness-filtered rebuild of the dataset list; faces stay skin-weighted in the sampler.
+- **Hyper-parameters (`scripts/sweep_hp.sh`, queued after the chain):** lr 1e-6 / 3e-6 / 1e-5, late
+  blocks only; all with EMA 0.999.
+- **Weight averaging:** EMA checkpoints (`--ema`) and soups (`scripts/soup.py`) of v2, crisp, the chain
+  winner and the sweep winner.
+- **Objective ranking (`scripts/rank.py`):** MUSIQ / CLIP-IQA / TOPIQ on rendered H3 frames, LPIPS /
+  DISTS on RealSR pairs, per weight set. Picks checkpoints by number.
+- **Final run:** the winning recipe on the full dataset, long cosine schedule, EMA on.
+- **Gate:** blind A/B (shuffled, unlabeled pairs on twelve clips) scored by Mike plus a vision-model
+  panel; ships only if it beats v2 AND crisp on the blind score and does not lose on the metrics.

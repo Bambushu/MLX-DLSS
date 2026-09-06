@@ -16,6 +16,7 @@ coreml = ["coremltools>=8"]
 video = ["opencv-python-headless>=4.8"]
 mask = ["transformers>=4.40"]
 web = ["nicegui>=2.10", "pydantic>=2"]
+metrics = ["pyiqa>=0.1.14", "setuptools<81"]   # scripts/rank.py; pyiqa's CLIP import needs pkg_resources
 
 [project.scripts]
 mlxdlss-torch = "mlxdlss.cli:main"
