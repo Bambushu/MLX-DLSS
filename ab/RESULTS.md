@@ -289,3 +289,18 @@ v1 was trained at scale 1: **scale 1 is its sweet spot; scale 2 is SOFTER with v
 stock). Detail 2 adds grain on cheeks; colour 0.5 vs 1 barely differs (v1 learned colour
 fidelity). **v1 recipe: `--processing-scale 1 --detail-strength 1 --colour-strength 1
 --auto-mask skin`.** Stock stays scale 2 / colour 0.5 for sharp Krea2 stills.
+
+### v1 vs v1-crisp on six 3-5 s clips (2026-09-06, ab/clips5/, Metal temporal)
+| clip | frames | hp src / v1 / crisp | flicker v1 / crisp | static-px diff src / v1 / crisp |
+|---|---|---|---|---|
+| face_rain | 120 | 2.71 / 3.39 / 3.32 | 1.19 / 1.17 | 0.48 / 0.59 / 0.53 |
+| face_glam | 96 | 6.56 / 7.77 / 7.62 | 1.27 / 1.21 | 0.26 / 0.42 / 0.41 |
+| face_kitchen (800x448) | 96 | 8.94 / 10.39 / 10.78 | 1.18 / 1.19 | 0.59 / 0.71 / 0.69 |
+| nf_loco | 96 | 7.57 / 9.38 / 9.88 | 1.12 / 1.17 | 0.47 / 0.62 / 0.60 |
+| nf_car | 72 | 5.41 / 7.38 / 7.73 | 1.27 / 1.31 | 0.76 / 1.14 / 0.97 |
+| nf_kitchen wide | 96 | 5.49 / 6.45 / 6.81 | 1.13 / 1.16 | 0.69 / 0.83 / 0.78 |
+
+Faces: v1 and crisp equal (crisp −2% hp, slightly lower static noise). Non-faces: crisp adds
+5-6% more detail than v1 (window reflections, plants, raindrops, machinery) with lower static
+noise on every clip. **crisp (run4 step 4000) becomes the default fine-tune**; v1 (run3 1500)
+kept as the conservative option. Both beat the source on all six at 100%.
