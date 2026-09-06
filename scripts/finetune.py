@@ -140,6 +140,52 @@ class Pairs:
         return soft, tgt, mask
 
 
+def synthetic_flow_grid(h: int, w: int, rng: random.Random) -> torch.Tensor:
+    """Plan D (panel consensus): an analytic camera/subject motion as a grid_sample grid (1,h,w,2 in
+    [-1,1]) — global similarity (rot ±2°, scale 0.98-1.03, shift ±6 px) plus a low-frequency
+    deformation (4x4 control grid, 0-10 px). No learned flow estimator needed: the network must be
+    invariant to small motion, not predict it."""
+    ang = math.radians(rng.uniform(-2, 2)); sc = rng.uniform(0.98, 1.03)
+    tx = rng.uniform(-6, 6) * 2 / w; ty = rng.uniform(-6, 6) * 2 / h
+    ys, xs = torch.meshgrid(torch.linspace(-1, 1, h), torch.linspace(-1, 1, w), indexing="ij")
+    gx = sc * (math.cos(ang) * xs - math.sin(ang) * ys) + tx
+    gy = sc * (math.sin(ang) * xs + math.cos(ang) * ys) + ty
+    amp = rng.uniform(0, 10)
+    ctrl = torch.tensor(np.random.default_rng(rng.randrange(1 << 30)).standard_normal((1, 2, 4, 4)), dtype=torch.float32) * amp
+    field = torch.nn.functional.interpolate(ctrl, size=(h, w), mode="bicubic", align_corners=True)[0]
+    gx = gx + field[0] * 2 / w; gy = gy + field[1] * 2 / h
+    return torch.stack([gx, gy], -1)[None]
+
+
+def warp(x: torch.Tensor, grid: torch.Tensor) -> torch.Tensor:
+    """Backward-warp an NHWC tensor with a grid_sample grid (bilinear, zeros outside)."""
+    return torch.nn.functional.grid_sample(x.permute(0, 3, 1, 2), grid.to(x.device), mode="bilinear", padding_mode="zeros", align_corners=True).permute(0, 2, 3, 1)
+
+
+def temporal_pair(pairs: "Pairs") -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, torch.Tensor, np.ndarray]:
+    """One sharp crop X (frame A) and its warped copy X_w (frame B), each degraded INDEPENDENTLY;
+    returns softA, tgtA, maskA, softB, tgtB, grid, valid — where grid maps B → A so that
+    warp(outputA, grid) should equal outputB on valid pixels."""
+    softA, tgtA, maskA = pairs.sample()
+    h, w = tgtA.shape[:2]
+    grid = synthetic_flow_grid(h, w, pairs.rng)
+    tgtB = warp(torch.from_numpy(tgtA)[None], grid)[0].numpy()
+    valid = ((grid[0, ..., 0].abs() <= 1) & (grid[0, ..., 1].abs() <= 1)).float().numpy()
+    valid[:8, :] = 0; valid[-8:, :] = 0; valid[:, :8] = 0; valid[:, -8:] = 0           # border erosion
+    softB = degrade(np.clip(tgtB, 0, 1), pairs.rng, pairs.degrade_version)
+    maskB = pairs.masker.skin(softB) if pairs.mask_on_degraded else warp(torch.from_numpy(maskA)[None, ..., None], grid)[0, ..., 0].numpy()
+    return softA, tgtA, maskA, softB, tgtB, grid, valid
+
+
+def temporal_loss(outA: torch.Tensor, outB: torch.Tensor, grid: torch.Tensor, valid: torch.Tensor) -> torch.Tensor:
+    """High-pass-only Charbonnier between warp(outA) and outB on valid pixels: invented detail must
+    travel with the content instead of re-rolling per frame. RGB is left to the other losses so the
+    net cannot satisfy this by fading detail."""
+    a = warp(outA, grid); hp_a = a - gauss(a, 2.0); hp_b = outB - gauss(outB, 2.0)
+    diff = torch.sqrt((hp_a - hp_b) ** 2 + 1e-6)
+    return (diff * valid[..., None]).sum() / (valid.sum() * 3 + 1e-6)
+
+
 def features_for(soft: np.ndarray, skin: np.ndarray, frame_index: int) -> np.ndarray:
     geometry = NetworkGeometry.identity(soft.shape[1], soft.shape[0])
     return make_features(soft, frame_index=frame_index, geometry=geometry, skin_mask=skin, **PROFILES["standard"])
@@ -423,6 +469,33 @@ def cmd_train(args) -> int:
     started = time.time()
     import math
     for step in range(1, args.steps + 1):
+        if args.w_temporal > 0:
+            pairsB = [temporal_pair(pairs) for _ in range(args.batch)]
+            softA = np.stack([q[0] for q in pairsB]); tgtA = np.stack([q[1] for q in pairsB]); maskA = np.stack([q[2] for q in pairsB])
+            softB = np.stack([q[3] for q in pairsB]); tgtB = np.stack([q[4] for q in pairsB]); grid = torch.cat([q[5] for q in pairsB]); valid = np.stack([q[6] for q in pairsB])
+            feats = torch.from_numpy(np.stack([features_for(s_, k_, step * args.batch + i) for i, (s_, k_) in enumerate(list(zip(softA, maskA)) + list(zip(softB, [pairs.masker.skin(sb) if pairs.mask_on_degraded else m for sb, m in zip(softB, maskA)])))])).to(args.device)
+            soft = torch.from_numpy(np.concatenate([softA, softB])).to(args.device)
+            tgt = torch.from_numpy(np.concatenate([tgtA, tgtB])).to(args.device)
+            skin = torch.from_numpy(np.concatenate([maskA, maskA])).to(args.device)
+            head = pipe.model(feats).float()
+            pred = compose(head, soft)
+            loss, parts = loss_fn(pred, tgt, skin, weights, dino)
+            n = args.batch
+            t_loss = temporal_loss(pred[:n], pred[n:], grid.to(args.device), torch.from_numpy(valid).to(args.device))
+            loss = loss + args.w_temporal * t_loss; parts["temporal"] = t_loss.item()
+            optimizer.zero_grad(set_to_none=True); loss.backward(); torch.nn.utils.clip_grad_norm_(params, 1.0); optimizer.step()
+            if args.cosine:
+                frac = min(1.0, step / 100) if step <= 100 else 0.05 + 0.95 * 0.5 * (1 + math.cos(math.pi * (step - 100) / max(1, args.steps - 100)))
+                for group in optimizer.param_groups:
+                    group["lr"] = args.lr * frac
+            if step % args.log_every == 0 or step == 1:
+                note(f"step {step} loss {loss.item():.4f} " + " ".join(f"{k} {v:.4f}" for k, v in parts.items()) + f" {(time.time() - started) / step:.2f}s/step")
+            if step % args.eval_every == 0 or step == args.steps:
+                ev = evaluate(pipe, hold_paths, masker, args.crop, args.eval_n, args.device, args.degrade, not args.mask_on_sharp)
+                note(f"step {step} eval {json.dumps({k: round(v, 3) for k, v in ev.items()})}")
+                save_weights(by_name, Path(args.weights), out / f"dlssnr-ft-step{step}.safetensors")
+                save_weights(by_name, Path(args.weights), out / "dlssnr-ft-latest.safetensors")
+            continue
         if args.cosine:                                    # 100-step warmup, cosine to 5% of the base lr
             frac = min(1.0, step / 100) if step <= 100 else 0.05 + 0.95 * 0.5 * (1 + math.cos(math.pi * (step - 100) / max(1, args.steps - 100)))
             for group in optimizer.param_groups:
@@ -480,6 +553,7 @@ def main() -> int:
     t.add_argument("--w-low", type=float, default=1.0); t.add_argument("--w-hp", type=float, default=0.5)
     t.add_argument("--w-energy", type=float, default=4.0); t.add_argument("--w-dino", type=float, default=0.0, help="DINOv2 perceptual weight (0 = off)")
     t.add_argument("--w-lap", type=float, default=0.0, help="multi-scale Laplacian + variance + anti-halo/anti-mottle hinges (plan C); use with --w-energy 0")
+    t.add_argument("--w-temporal", type=float, default=0.0, help="plan D: synthetic-flow two-frame consistency on the high-pass (0 = off); doubles the forward cost")
     e = sub.add_parser("eval"); e.add_argument("--dataset", required=True); e.add_argument("--weights", required=True); e.add_argument("--weights2", default=None)
     e.add_argument("--n", type=int, default=24); e.add_argument("--crop", type=int, default=256); e.add_argument("--holdout", type=int, default=12); e.add_argument("--device", default="mps")
     args = p.parse_args()
