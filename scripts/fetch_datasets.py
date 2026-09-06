@@ -1,8 +1,9 @@
 #!/usr/bin/env python
 """Fetch the run2 training data: FFHQ-1024 shards, LSDIR parquet shards, RealSR V3 (eval).
 
-  fetch_datasets.py ROOT [--ffhq-shards 6] [--lsdir-shards 10] [--realsr]
-Images are extracted to ROOT/ffhq/*.webp, ROOT/lsdir/*.png, RealSR to ROOT/realsr/.
+  fetch_datasets.py ROOT [--ffhq-shards 6] [--lsdir-shards 10] [--realsr] [--flickr2k] [--div8k]
+Images are extracted to ROOT/ffhq/*.webp, ROOT/lsdir/*.png, ROOT/flickr2k/*.png, ROOT/div8k/*.png
+(DIV8K resampled to <= 3072 px on the long side, Lanczos), RealSR to ROOT/realsr/.
 """
 from __future__ import annotations
 
@@ -69,14 +70,57 @@ def fetch_realsr(root: Path) -> None:
     Path(path).unlink(missing_ok=True)
 
 
+def _fetch_zip(root: Path, repo: str, filename: str, sub: str, max_side: int | None) -> None:
+    """One HF zip of stills -> ROOT/sub/*.png, optionally Lanczos-resampled so the long side <= max_side."""
+    import zipfile
+    from PIL import Image
+
+    out = root / sub; out.mkdir(parents=True, exist_ok=True)
+    marker = out / ".done"
+    if marker.exists():
+        print(f"{sub}: already extracted", flush=True); return
+    path = hf_hub_download(repo, filename, repo_type="dataset", token=token(), cache_dir=str(root / "_hub"))
+    n = 0
+    with zipfile.ZipFile(path) as z:
+        for info in z.infolist():
+            if info.is_dir() or not info.filename.lower().endswith((".png", ".jpg", ".jpeg")):
+                continue
+            target = out / (Path(info.filename).stem + ".png")
+            if target.exists():
+                n += 1; continue
+            with z.open(info) as f:
+                im = Image.open(io.BytesIO(f.read())).convert("RGB")
+            if max_side and max(im.size) > max_side:
+                k = max_side / max(im.size)
+                im = im.resize((round(im.width * k), round(im.height * k)), Image.LANCZOS)
+            im.save(target, compress_level=1); n += 1
+            if n % 200 == 0:
+                print(f"{sub}: {n} images", flush=True)
+    marker.touch(); Path(path).unlink(missing_ok=True)
+    print(f"{sub}: {n} images", flush=True)
+
+
+def fetch_flickr2k(root: Path) -> None:
+    _fetch_zip(root, "yangtao9009/Flickr2K", "Flickr2K.zip", "flickr2k", None)
+
+
+def fetch_div8k(root: Path) -> None:
+    _fetch_zip(root, "yangtao9009/DIV8K", "DIV8K.zip", "div8k", 3072)
+
+
 def main() -> int:
     p = argparse.ArgumentParser(); p.add_argument("root", type=Path)
     p.add_argument("--ffhq-shards", type=int, default=6); p.add_argument("--lsdir-shards", type=int, default=10); p.add_argument("--realsr", action="store_true")
+    p.add_argument("--flickr2k", action="store_true"); p.add_argument("--div8k", action="store_true")
     a = p.parse_args()
     fetch_ffhq(a.root, a.ffhq_shards)
     fetch_lsdir(a.root, a.lsdir_shards)
     if a.realsr:
         fetch_realsr(a.root)
+    if a.flickr2k:
+        fetch_flickr2k(a.root)
+    if a.div8k:
+        fetch_div8k(a.root)
     print("FETCH DONE", flush=True)
     return 0
 

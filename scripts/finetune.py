@@ -14,6 +14,7 @@ composed the way inference composes: image + 0.25 * head[..., :3], L1 plus a hig
 from __future__ import annotations
 
 import argparse
+import re
 import io
 import math
 import json
@@ -219,7 +220,7 @@ def act_penalty() -> tuple[torch.Tensor | float, float]:
     amax = float(amax.item()) if torch.is_tensor(amax) else amax
     return pen, amax
 
-def trainable_pipeline(weights: Path, device: str) -> tuple[NeuralRenderingPipeline, list[torch.Tensor], dict[str, torch.Tensor]]:
+def trainable_pipeline(weights: Path, device: str, train_pattern: str | None = None) -> tuple[NeuralRenderingPipeline, list[torch.Tensor], dict[str, torch.Tensor]]:
     orig = M.e4m3_round_trip
     def ste(v):                                            # straight-through estimator + FP8 envelope barrier
         if torch.is_grad_enabled() and v.requires_grad:
@@ -236,6 +237,8 @@ def trainable_pipeline(weights: Path, device: str) -> tuple[NeuralRenderingPipel
         name = names[attr]
         if name.endswith(("attn_scale", "attn_bias", "attention_scalar", "blend_scale")):
             continue                                            # recovered constants, no gradient path
+        if train_pattern and not re.search(train_pattern, name):
+            continue                                            # --train-blocks: leave the rest frozen
         buf.requires_grad_(True); params.append(buf); by_name[name] = buf
     return pipe, params, by_name
 
@@ -528,10 +531,16 @@ def evaluate(pipe: NeuralRenderingPipeline, paths: list[Path], masker: SkinMaske
 def cmd_train(args) -> int:
     out = Path(args.out); out.mkdir(parents=True, exist_ok=True)
     train_paths, hold_paths = split(Path(args.dataset), args.holdout)
-    pipe, params, by_name = trainable_pipeline(Path(args.weights), args.device)
+    pipe, params, by_name = trainable_pipeline(Path(args.weights), args.device, args.train_blocks)
     masker = SkinMasker(device=args.device)
     pairs = Pairs(train_paths, args.crop, masker, seed=args.seed, degrade_version=args.degrade, mask_on_degraded=not args.mask_on_sharp)
     optimizer = torch.optim.AdamW(params, lr=args.lr, weight_decay=0.0, betas=(0.9, 0.99))
+    ema = {name: t.detach().clone() for name, t in by_name.items()} if args.ema > 0 else None
+    def ema_update():
+        if ema is None: return
+        with torch.no_grad():
+            for name, t in by_name.items():
+                ema[name].mul_(args.ema).add_(t.detach(), alpha=1 - args.ema)
     weights = {"low": args.w_low, "hp": args.w_hp, "energy": args.w_energy, "dino": args.w_dino, "lap": args.w_lap}
     global LAP_TERMS, LAP_CONTRAST; LAP_TERMS = set(t for t in args.lap_terms.split(",") if t); LAP_CONTRAST = args.lap_contrast
     dino = DinoPerceptual(args.device) if args.w_dino > 0 else None
@@ -585,7 +594,7 @@ def cmd_train(args) -> int:
             if torch.isfinite(loss):
                 loss.backward(); gnorm = torch.nn.utils.clip_grad_norm_(params, 1.0)
                 if torch.isfinite(gnorm):
-                    optimizer.step()
+                    optimizer.step(); ema_update()
                 else:
                     note(f"step {step}: non-finite grad norm, step skipped")
             else:
@@ -601,6 +610,9 @@ def cmd_train(args) -> int:
                 note(f"step {step} eval {json.dumps({k: round(v, 3) for k, v in ev.items()})}")
                 save_weights(by_name, Path(args.weights), out / f"dlssnr-ft-step{step}.safetensors")
                 save_weights(by_name, Path(args.weights), out / "dlssnr-ft-latest.safetensors")
+                if ema is not None:
+                    save_weights(ema, Path(args.weights), out / f"dlssnr-ft-ema-step{step}.safetensors")
+                    save_weights(ema, Path(args.weights), out / "dlssnr-ft-ema-latest.safetensors")
             continue
         if args.cosine:                                    # 100-step warmup, cosine to 5% of the base lr
             frac = min(1.0, step / 100) if step <= 100 else 0.05 + 0.95 * 0.5 * (1 + math.cos(math.pi * (step - 100) / max(1, args.steps - 100)))
@@ -622,7 +634,7 @@ def cmd_train(args) -> int:
             loss.backward()
             gnorm = torch.nn.utils.clip_grad_norm_(params, 1.0)
             if torch.isfinite(gnorm):
-                optimizer.step()
+                optimizer.step(); ema_update()
             else:
                 note(f"step {step}: non-finite grad norm, step skipped")
         else:
@@ -638,6 +650,9 @@ def cmd_train(args) -> int:
             note(f"step {step} eval {json.dumps({k: round(v, 3) for k, v in ev.items()})}")
             save_weights(by_name, Path(args.weights), out / f"dlssnr-ft-step{step}.safetensors")
             save_weights(by_name, Path(args.weights), out / "dlssnr-ft-latest.safetensors")
+            if ema is not None:
+                save_weights(ema, Path(args.weights), out / f"dlssnr-ft-ema-step{step}.safetensors")
+                save_weights(ema, Path(args.weights), out / "dlssnr-ft-ema-latest.safetensors")
     return 0
 
 
@@ -677,6 +692,8 @@ def main() -> int:
     t.add_argument("--lap-terms", default="band,var,halo,mottle", help="which plan-C sub-terms are active (ablation)")
     t.add_argument("--max-swap-gb", type=float, default=16.0, help="memory watchdog: stop (exit 3) when swap in use exceeds this")
     t.add_argument("--min-free-pct", type=float, default=12.0, help="memory watchdog: stop (exit 3) when macOS free-memory percentage drops below this")
+    t.add_argument("--ema", type=float, default=0.0, help="EMA decay of the weights (0 = off; 0.999 ~ 1000-step window); saves dlssnr-ft-ema-*.safetensors beside each checkpoint")
+    t.add_argument("--train-blocks", default=None, help="regex on tensor names; only matching tensors train (e.g. 'block([3-6][0-9]|70)\\.')")
     t.add_argument("--w-act", type=float, default=10.0, help="FP8 envelope barrier: penalty on |activation| above 256 at every E4M3 site (0 = off)")
     t.add_argument("--w-temporal", type=float, default=0.0, help="plan D: synthetic-flow two-frame consistency on the high-pass (0 = off); doubles the forward cost")
     t.add_argument("--w-adv", type=float, default=0.0, help="plan E: band-limited PatchGAN hinge weight on the generator (0 = off; start 0.005)")
