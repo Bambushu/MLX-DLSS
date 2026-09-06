@@ -412,3 +412,12 @@ Mike's pick: recent production H3 renders only — nine indiewalsh takes (first,
 walk, grwm, night, car, smoothie) + bloomrest sleeping close-up (2026-09-06), portfolio marcus
 (male), barista café (wide). Rejected: old/upscaled/stock material (eros HiRes, casino, airport,
 4K terrace, virtual-camera reel) — "I don't want to upscale or DLSS5 it".
+
+### dataset3 (2026-09-06 night, `--min-sharp 1.6 --min-side 768`)
+| source | on disk | sharp stills |
+|---|---|---|
+| FFHQ-1024 (70 shards) | 70000 | 28386 |
+| LSDIR (40 shards, ≥768) | 7510 | 7451 |
+| Flickr2K | 2650 | 2463 |
+| DIV8K (≤3072 px) | 1500 | 1254 |
+| **total** | | **39554** (dataset2 was 6579) |
