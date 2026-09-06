@@ -69,7 +69,32 @@ def main() -> int:
     import pyiqa, spandrel
     fr = {n: pyiqa.create_metric(n, device=a.device) for n in ("lpips", "dists")}
     nr = {n: pyiqa.create_metric(n, device=a.device) for n in ("musiq", "topiq_nr")}
-    models = {Path(f).stem: spandrel.ModelLoader().load_from_file(f).eval().to(a.device) for f in sorted(glob.glob(a.models_dir + "/*.safetensors") + glob.glob(a.models_dir + "/*.pth"))}
+    models = {Path(f).stem: spandrel.ModelLoader().load_from_file(f).eval().to(a.device) for f in sorted(glob.glob(a.models_dir + "/*.safetensors") + glob.glob(a.models_dir + "/*.pth")) if "EfRLFN" not in f}
+    efr = Path.home() / "mlx-upscalers/EfRLFN"                                      # ICLR 2026 EfRLFN, torch class + weights converted from the MLX port
+    if efr.exists():
+        sys.path.insert(0, str(efr)); from code.model import EfRLFN; from safetensors.torch import load_file
+        for sc in (2, 4):
+            w = Path(a.models_dir) / f"EfRLFN_x{sc}_torch.safetensors"
+            if w.exists():
+                net = EfRLFN(upscale=sc).eval(); net.load_state_dict(load_file(str(w))); models[f"efrlfn_x{sc}"] = net.to(a.device)
+    thera = Path.home() / "mlx-upscalers/ComfyUI-Thera"                            # Thera (TMLR 2025) arbitrary-scale SR, JAX reference on CPU (the MLX port converts to noise)
+    thera_models = {}
+    if thera.exists():
+        import pickle
+        sys.path.insert(0, str(thera))
+        import jax._src.core as _c
+        _o = _c.ShapedArray.update
+        def _u(self, **kw): kw.pop("named_shape", None); return _o(self, **kw)
+        _c.ShapedArray.update = _u
+        from thera.model import build_thera
+        from thera.super_resolve import process as thera_process
+        from huggingface_hub import hf_hub_download
+        for v in ("air", "pro"):
+            check = pickle.load(open(hf_hub_download(f"prs-eth/thera-edsr-{v}", "model.pkl"), "rb"))
+            thera_models[v] = (build_thera(3, check["backbone"], check["size"]), check["model"])
+    def run_thera(img, size, variant):
+        model, params = thera_models[variant]
+        return np.asarray(thera_process(img.astype(np.float32) / 255, model, params, (size[1], size[0]), 256, False)).astype(np.uint8)
     pipe = NeuralRenderingPipeline.from_safetensors(a.weights, device=a.device, precision="fast"); masker = SkinMasker(device=a.device)
     to_t = lambda x: torch.from_numpy(x).permute(2, 0, 1)[None].float().div(255).to(a.device)
     scores: dict[str, dict[str, list[float]]] = {}
@@ -85,6 +110,9 @@ def main() -> int:
             ups = {"bicubic": resample(small, (W, H), Image.BICUBIC), "lanczos": resample(small, (W, H), Image.LANCZOS)}
             for n, m in models.items():
                 big = run_model(m, small, a.device); ups[n] = resample(big, (W, H), Image.LANCZOS) if big.shape[:2] != (H, W) else big
+            if thera_models:
+                for v in ("air", "pro"):
+                    ups["thera_" + v] = run_thera(small, (W, H), v)
             for n, up in ups.items():
                 record(n, up, ref)
                 img = up.astype(np.float32) / 255
