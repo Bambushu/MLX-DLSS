@@ -275,6 +275,9 @@ def median3(x: torch.Tensor) -> torch.Tensor:
     return patches.median(-1).values.permute(0, 2, 3, 1)
 
 
+LAP_TERMS = {"band", "var", "halo", "mottle"}
+
+
 def laplacian_loss(pred: torch.Tensor, tgt: torch.Tensor, w: torch.Tensor) -> tuple[torch.Tensor, dict]:
     """Panel plan C. Three Laplacian bands (σ 1-2, 2-4, 4-8) matched by L1 AND by 7x7 local variance
     (the contrast of the band, i.e. how real the detail feels), finer bands weighted higher, target
@@ -299,7 +302,10 @@ def laplacian_loss(pred: torch.Tensor, tgt: torch.Tensor, w: torch.Tensor) -> tu
     halo = (torch.relu(hp_p.abs() - hp_t.abs()) * edge).mean() * 2.0
     flat = (hp_t.abs() < 0.008).float()
     mottle = (torch.relu(hp_p.abs() - 0.008) * flat).mean() * 1.0
-    total = band_l1 + var_l1 + halo + mottle
+    total = pred.new_zeros(())
+    for name, term in (("band", band_l1), ("var", var_l1), ("halo", halo), ("mottle", mottle)):
+        if name in LAP_TERMS:
+            total = total + term
     return total, {"lap": band_l1.item(), "lvar": var_l1.item(), "halo": halo.item(), "mottle": mottle.item()}
 
 
@@ -491,6 +497,7 @@ def cmd_train(args) -> int:
     pairs = Pairs(train_paths, args.crop, masker, seed=args.seed, degrade_version=args.degrade, mask_on_degraded=not args.mask_on_sharp)
     optimizer = torch.optim.AdamW(params, lr=args.lr, weight_decay=0.0, betas=(0.9, 0.99))
     weights = {"low": args.w_low, "hp": args.w_hp, "energy": args.w_energy, "dino": args.w_dino, "lap": args.w_lap}
+    global LAP_TERMS; LAP_TERMS = set(t for t in args.lap_terms.split(",") if t)
     dino = DinoPerceptual(args.device) if args.w_dino > 0 else None
     disc = None
     if args.w_adv > 0:
@@ -624,6 +631,7 @@ def main() -> int:
     t.add_argument("--w-low", type=float, default=1.0); t.add_argument("--w-hp", type=float, default=0.5)
     t.add_argument("--w-energy", type=float, default=4.0); t.add_argument("--w-dino", type=float, default=0.0, help="DINOv2 perceptual weight (0 = off)")
     t.add_argument("--w-lap", type=float, default=0.0, help="multi-scale Laplacian + variance + anti-halo/anti-mottle hinges (plan C); use with --w-energy 0")
+    t.add_argument("--lap-terms", default="band,var,halo,mottle", help="which plan-C sub-terms are active (ablation)")
     t.add_argument("--w-temporal", type=float, default=0.0, help="plan D: synthetic-flow two-frame consistency on the high-pass (0 = off); doubles the forward cost")
     t.add_argument("--w-adv", type=float, default=0.0, help="plan E: band-limited PatchGAN hinge weight on the generator (0 = off; start 0.005)")
     t.add_argument("--w-fm", type=float, default=1.0, help="plan E: discriminator feature-matching weight")
