@@ -304,3 +304,35 @@ Faces: v1 and crisp equal (crisp −2% hp, slightly lower static noise). Non-fac
 5-6% more detail than v1 (window reflections, plants, raindrops, machinery) with lower static
 noise on every clip. **crisp (run4 step 4000) becomes the default fine-tune**; v1 (run3 1500)
 kept as the conservative option. Both beat the source on all six at 100%.
+
+## Panel plan B — noise-channel coherence (2026-09-06, ab/noise/)
+Crisp weights, torch temporal, 24 frames. Feature channels 0-2 = fresh (vendor) / frozen / zero /
+advected-along-flow noise:
+| clip | mode | hp f12 | flicker | static-px | moving-px |
+|---|---|---|---|---|---|
+| face_rain | fresh / frozen / zero / advected | 2.91 / 2.91 / 2.90 / 2.92 | 1.19 / 1.19 / 1.18 / 1.19 | 0.49 / 0.48 / 0.48 / 0.49 | 8.9 / 8.9 / 8.8 / 8.8 |
+| nf_car | fresh / frozen / zero / advected | 9.08 / 9.09 / 9.05 / 9.09 | 1.38 / 1.37 / 1.37 / 1.38 | 0.95 / 0.93 / 0.93 / 0.97 | 17.6 / 17.6 / 17.6 / 17.6 |
+**No effect at all** — the network (stock or fine-tuned) barely uses the noise channels. The moving-
+pixel flicker is per-frame hallucination + codec jitter, not noise. `--noise-mode` stays as a
+documented no-op experiment. Next: band-split history blend (more history on the high-pass).
+
+## Panel plan A — degradation v2 calibration (2026-09-06)
+Against 31 real H3 frames (ab/ft/h3frames): skin high-pass 2.28 (p10 1.26, p90 3.75) vs FFHQ
+sharp targets 3.05 → H3 keeps ~75% of the sharp high-pass, WIDE spread up to near-sharp. Old v1
+degrade inputs: 1.48 (softer than H3, opposite of the panel's premise). v2 after tuning: 1.75
+(p10 0.81, p90 2.89), RealSR ratio 0.82 (p10 0.46, p90 1.0): brackets H3 from codec-crushed to
+clean. Mixture: 20% clean, 10% phone noise, 20% JPEG q35-75, 50% x264 CRF 22-36 4:2:0 (30% double
+encode); downscale 0.55-1.0; blur 0-0.7 AFTER the codec; sensor noise before it in 50%.
+Skin mask now computed on the degraded crop. run6 = fine-tune from crisp, 3000 steps, cosine, lr 8e-6.
+
+### B part 2 — band-split high-pass history blend (`--hp-history`, torch temporal)
+Vendor blend on the low-pass; high-pass pulled toward the reprojected previous OUTPUT by α,
+gated by the photometric error of the reprojected previous INPUT (full trust < 1.5/255, none > 15/255).
+| clip | variant | hp f12 | flicker | static-px | moving-px |
+|---|---|---|---|---|---|
+| face_rain | vendor / α0.4 / α0.7 | 2.91 / 2.85 / 2.77 | 1.19 / 1.14 / 1.10 | 0.49 / 0.44 / 0.41 (source 0.43) | 8.9 / 8.6 / 8.4 |
+| nf_car | vendor / α0.4 / α0.7 | 9.08 / 8.83 / 8.64 | 1.38 / 1.34 / 1.33 | 0.95 / 0.89 / 0.86 (source 0.71) | 17.6 / 17.3 / 17.2 |
+Static-pixel shimmer on the face drops BELOW the source at α0.7 for a 5% detail cost; moving
+pixels barely change because the gate (correctly) releases where content moves. Modest, real,
+free. Recommendation: `--hp-history 0.5` for video. Default stays 0 (vendor parity). Metal path
+does not have it yet.

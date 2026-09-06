@@ -39,6 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--scene-cut", type=float, default=0.3, help="mean luma change that resets the history (0 disables)")
     run.add_argument("--auto-mask", default="none", choices=("none", "skin"), help="skin: per-frame face-parsing mask confines the structure/detail pass to skin (torch backend)")
     run.add_argument("--noise-mode", default="fresh", choices=("fresh", "frozen", "zero", "advected"), help="temporal, torch backend: the 3 noise channels per frame — fresh (vendor), frozen, zero, or advected along the motion")
+    run.add_argument("--hp-history", type=float, default=0.0, help="temporal, torch backend: extra history weight on the high-pass band (0-0.7), photometrically gated; reduces re-rolling of invented detail")
     run.add_argument("--mask-floor", type=float, default=0.0, help="structure strength kept outside the auto mask, 0-1")
     run.add_argument("--mask-feather", type=float, default=8.0, help="auto-mask edge softening, gaussian sigma in pixels")
     run.add_argument("--blend-scale", type=float, default=None, help="cap of the learned history blend (default: recovered 0.7397)")
@@ -110,7 +111,7 @@ def main(argv: list[str] | None = None) -> int:
             decode_args=shlex.split(args.decode_args), encode_args=None if args.encode_args is None else shlex.split(args.encode_args),
             audio=args.audio, overwrite=args.overwrite, status_interval=args.status_interval,
             temporal=args.temporal, motion=args.motion, scene_cut_threshold=args.scene_cut,
-            auto_mask=args.auto_mask, mask_floor=args.mask_floor, mask_feather=args.mask_feather, noise_mode=args.noise_mode,
+            auto_mask=args.auto_mask, mask_floor=args.mask_floor, mask_feather=args.mask_feather, noise_mode=args.noise_mode, hp_history=args.hp_history,
             backend=args.backend, model_package=str(args.model) if args.model else None, mlxdlss=args.mlxdlss, execution=args.execution, precision=args.mlxdlss_precision,
             **({"blend_scale": args.blend_scale} if args.blend_scale is not None else {}),
             enhance={"profile": args.profile, "processing_scale": args.processing_scale, "detail_strength": args.detail_strength,

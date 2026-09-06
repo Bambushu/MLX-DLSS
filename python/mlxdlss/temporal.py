@@ -224,6 +224,8 @@ class TemporalOptions:
     local_tone_strength: float | None = None
     local_structure_strength: float | None = None
     noise_mode: str = "fresh"       # fresh (vendor: new noise per frame) | frozen | zero | advected (noise field follows the motion)
+    hp_history: float = 0.0         # extra history weight on the HIGH-PASS band only (0 = vendor blend), gated by photometric warp error
+    hp_history_sigma: float = 2.0   # gaussian sigma of the band split
 
 
 class TemporalSession:
@@ -317,10 +319,31 @@ class TemporalSession:
                 network[..., 0:3] = noise
             head = geometry.crop(self.pipeline.run_features(network))
             output = compose_temporal(head, frame, features, blend_scale=self.options.blend_scale, control_mask=control_mask, intensity=self.options.intensity)
+            if self.options.hp_history > 0:
+                output = self._blend_highpass_history(output, frame, motion, height, width)
         self.history = output; self.previous = frame; self.frame_index += 1
         return compose_detail(
             frame, output, detail_strength=self.options.detail_strength, colour_strength=self.options.colour_strength, radius=self.options.detail_radius
         )
+
+    def _blend_highpass_history(self, output: np.ndarray, frame: np.ndarray, motion: np.ndarray, height: int, width: int) -> np.ndarray:
+        """Band-split temporal blend: keep the vendor blend on the low-pass, pull the high-pass toward the
+        reprojected previous OUTPUT by ``hp_history`` where the reprojected previous INPUT still matches
+        the current input (photometric gate), so invented detail stops re-rolling frame to frame."""
+        from .composition import blur, gaussian_kernel
+
+        yy, xx = np.indices((height, width))
+        u = (xx.astype(np.float32) + np.float32(0.5)) / np.float32(width) + motion[..., 0]
+        v = (yy.astype(np.float32) + np.float32(0.5)) / np.float32(height) + motion[..., 1]
+        prev_out = sample_history(self.history, u, v)
+        prev_in = sample_history(self.previous, u, v)
+        kernel = gaussian_kernel(self.options.hp_history_sigma)
+        low = lambda img: np.stack([blur(blur(img[..., c], kernel).T, kernel).T for c in range(3)], axis=-1)
+        error = np.abs(frame - prev_in).mean(-1, keepdims=True)                 # 0..1
+        gate = np.clip(1.0 - error / np.float32(0.06), 0.0, 1.0)                # full trust under ~1.5/255, none above ~15/255
+        alpha = np.float32(self.options.hp_history) * gate
+        hp_out = output - low(output); hp_prev = prev_out - low(prev_out)
+        return np.clip(output + alpha * (hp_prev - hp_out), 0, 1).astype(np.float32)
 
     def _is_scene_cut(self, frame: np.ndarray) -> bool:
         if self.options.scene_cut_threshold <= 0:
