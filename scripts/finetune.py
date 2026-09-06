@@ -303,6 +303,41 @@ def laplacian_loss(pred: torch.Tensor, tgt: torch.Tensor, w: torch.Tensor) -> tu
     return total, {"lap": band_l1.item(), "lvar": var_l1.item(), "halo": halo.item(), "mottle": mottle.item()}
 
 
+class BandDiscriminator(torch.nn.Module):
+    """Plan E (panel): 70x70-ish PatchGAN with spectral norm, hinge loss, fed the HIGH-PASS band (3ch)
+    plus the LOW-PASS as a condition (3ch) so it can only judge texture, never tone. Returns the
+    patch logits and the intermediate features (for feature matching)."""
+
+    def __init__(self, ch: int = 48):
+        super().__init__()
+        sn = torch.nn.utils.spectral_norm
+        self.blocks = torch.nn.ModuleList([
+            torch.nn.Sequential(sn(torch.nn.Conv2d(6, ch, 4, 2, 1)), torch.nn.LeakyReLU(0.2)),
+            torch.nn.Sequential(sn(torch.nn.Conv2d(ch, ch * 2, 4, 2, 1)), torch.nn.LeakyReLU(0.2)),
+            torch.nn.Sequential(sn(torch.nn.Conv2d(ch * 2, ch * 4, 4, 2, 1)), torch.nn.LeakyReLU(0.2)),
+            torch.nn.Sequential(sn(torch.nn.Conv2d(ch * 4, ch * 8, 4, 1, 1)), torch.nn.LeakyReLU(0.2)),
+        ])
+        self.head = sn(torch.nn.Conv2d(ch * 8, 1, 4, 1, 1))
+
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, list[torch.Tensor]]:
+        feats = []
+        for block in self.blocks:
+            x = block(x); feats.append(x)
+        return self.head(x), feats
+
+
+def band_input(img: torch.Tensor) -> torch.Tensor:
+    """(N,6,H,W): high-pass above σ=2 scaled ×8, and the low-pass condition."""
+    low = gauss(img, 2.0)
+    return torch.cat([(img - low) * 8.0, low], -1).permute(0, 3, 1, 2)
+
+
+def quantize_like_output(tgt: torch.Tensor, soft: torch.Tensor) -> torch.Tensor:
+    """Kimi's catch: outputs live on the half()×0.25 residual lattice; put the REAL target on the same
+    lattice or the discriminator just learns to detect quantization."""
+    return (soft + ((tgt - soft) * 4.0).half().float() * 0.25).clamp(0, 1)
+
+
 def loss_fn(pred: torch.Tensor, tgt: torch.Tensor, skin: torch.Tensor, weights: dict | None = None, dino: "DinoPerceptual | None" = None) -> tuple[torch.Tensor, dict]:
     """Colour fidelity on the low-pass, a weak pixel term on the high-pass, and a strong match of
     local high-pass ENERGY (so the network is rewarded for the right amount of texture rather
@@ -457,6 +492,23 @@ def cmd_train(args) -> int:
     optimizer = torch.optim.AdamW(params, lr=args.lr, weight_decay=0.0, betas=(0.9, 0.99))
     weights = {"low": args.w_low, "hp": args.w_hp, "energy": args.w_energy, "dino": args.w_dino, "lap": args.w_lap}
     dino = DinoPerceptual(args.device) if args.w_dino > 0 else None
+    disc = None
+    if args.w_adv > 0:
+        disc = BandDiscriminator().to(args.device)
+        d_opt = torch.optim.Adam(disc.parameters(), lr=2e-4, betas=(0.5, 0.999))
+
+    def adversarial(pred: torch.Tensor, tgt: torch.Tensor, soft: torch.Tensor, step: int) -> tuple[torch.Tensor, dict]:
+        """One D update (hinge) on quantized reals vs detached fakes, then the G terms: hinge + feature matching.
+        Ramp: 0 for the first ``adv_warmup`` steps, linear to full over the next ``adv_ramp``."""
+        real = band_input(quantize_like_output(tgt, soft)); fake = band_input(pred)
+        d_real, f_real = disc(real); d_fake, _ = disc(fake.detach())
+        d_loss = torch.relu(1 - d_real).mean() + torch.relu(1 + d_fake).mean()
+        d_opt.zero_grad(set_to_none=True); d_loss.backward(); d_opt.step()
+        ramp = 0.0 if step <= args.adv_warmup else min(1.0, (step - args.adv_warmup) / max(1, args.adv_ramp))
+        g_logit, f_fake = disc(fake)
+        g_adv = -g_logit.mean()
+        fm = sum(torch.nn.functional.l1_loss(a, b.detach()) for a, b in zip(f_fake[:3], f_real[:3])) / 3
+        return ramp * (args.w_adv * g_adv + args.w_fm * fm), {"d": d_loss.item(), "adv": g_adv.item(), "fm": fm.item(), "ramp": ramp}
     log = open(out / "train.log", "a")
     def note(msg: str) -> None:
         print(msg, flush=True); log.write(msg + "\n"); log.flush()
@@ -483,6 +535,8 @@ def cmd_train(args) -> int:
             n = args.batch
             t_loss = temporal_loss(pred[:n], pred[n:], grid.to(args.device), torch.from_numpy(valid).to(args.device))
             loss = loss + args.w_temporal * t_loss; parts["temporal"] = t_loss.item()
+            if disc is not None:
+                g_loss, gparts = adversarial(pred, tgt, soft, step); loss = loss + g_loss; parts.update(gparts)
             optimizer.zero_grad(set_to_none=True); loss.backward(); torch.nn.utils.clip_grad_norm_(params, 1.0); optimizer.step()
             if args.cosine:
                 frac = min(1.0, step / 100) if step <= 100 else 0.05 + 0.95 * 0.5 * (1 + math.cos(math.pi * (step - 100) / max(1, args.steps - 100)))
@@ -506,7 +560,10 @@ def cmd_train(args) -> int:
         tgt = torch.from_numpy(np.stack([b[1] for b in batch])).to(args.device)
         skin = torch.from_numpy(np.stack([b[2] for b in batch])).to(args.device)
         head = pipe.model(feats).float()
-        loss, parts = loss_fn(compose(head, soft), tgt, skin, weights, dino)
+        pred = compose(head, soft)
+        loss, parts = loss_fn(pred, tgt, skin, weights, dino)
+        if disc is not None:
+            g_loss, gparts = adversarial(pred, tgt, soft, step); loss = loss + g_loss; parts.update(gparts)
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(params, 1.0)
@@ -554,6 +611,9 @@ def main() -> int:
     t.add_argument("--w-energy", type=float, default=4.0); t.add_argument("--w-dino", type=float, default=0.0, help="DINOv2 perceptual weight (0 = off)")
     t.add_argument("--w-lap", type=float, default=0.0, help="multi-scale Laplacian + variance + anti-halo/anti-mottle hinges (plan C); use with --w-energy 0")
     t.add_argument("--w-temporal", type=float, default=0.0, help="plan D: synthetic-flow two-frame consistency on the high-pass (0 = off); doubles the forward cost")
+    t.add_argument("--w-adv", type=float, default=0.0, help="plan E: band-limited PatchGAN hinge weight on the generator (0 = off; start 0.005)")
+    t.add_argument("--w-fm", type=float, default=1.0, help="plan E: discriminator feature-matching weight")
+    t.add_argument("--adv-warmup", type=int, default=200); t.add_argument("--adv-ramp", type=int, default=500)
     e = sub.add_parser("eval"); e.add_argument("--dataset", required=True); e.add_argument("--weights", required=True); e.add_argument("--weights2", default=None)
     e.add_argument("--n", type=int, default=24); e.add_argument("--crop", type=int, default=256); e.add_argument("--holdout", type=int, default=12); e.add_argument("--device", default="mps")
     args = p.parse_args()
