@@ -406,3 +406,9 @@ already swaps on 51 GB), real H3 crops with no reconstruction loss (needs the GA
 through the history blend (after plan D), directional edge-annulus halo term (C says drop hinges;
 decide on run7's eval). Panel is split on late-blocks-only and on the GAN; both stay in the plan as
 measured runs.
+
+### Blind A/B set (ab/clips12, 2026-09-06, 72 frames each, long side ≤1440, crf 10)
+Mike's pick: recent production H3 renders only — nine indiewalsh takes (first, comesup, coffee, gym,
+walk, grwm, night, car, smoothie) + bloomrest sleeping close-up (2026-09-06), portfolio marcus
+(male), barista café (wide). Rejected: old/upscaled/stock material (eros HiRes, casino, airport,
+4K terrace, virtual-camera reel) — "I don't want to upscale or DLSS5 it".
