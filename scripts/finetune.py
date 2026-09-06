@@ -18,6 +18,7 @@ import io
 import json
 import os
 import random
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -45,24 +46,74 @@ def load_image(path: Path) -> np.ndarray:
     return np.asarray(Image.open(path).convert("RGB")).astype(np.float32) / 255
 
 
-def degrade(image: np.ndarray, rng: random.Random) -> np.ndarray:
-    """Soft-video proxy calibrated on RealSR (real DSLR x2/x3 pairs keep 0.51/0.33 of the sharp
-    image's high-pass energy; the first version of this kept 0.73): downscale 0.35-0.65, resample
-    back, JPEG q 25-55, blur sigma 0.5-1.3."""
+def _x264_roundtrip(rgb: np.ndarray, crf: int, rng: random.Random) -> np.ndarray:
+    """One frame through libx264 at ``crf`` (yuv420p, 4:2:0 chroma) and back — the codec AI video
+    actually ships in. A second pass (30%) mimics re-encoded uploads."""
+    h, w = rgb.shape[:2]
+    w2, h2 = w - w % 2, h - h % 2
+    data = np.ascontiguousarray(rgb[:h2, :w2]).tobytes()
+    passes = 2 if rng.random() < 0.3 else 1
+    for _ in range(passes):
+        proc = subprocess.run(["ffmpeg", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{w2}x{h2}", "-i", "-",
+                               "-c:v", "libx264", "-preset", "veryfast", "-crf", str(crf), "-pix_fmt", "yuv420p", "-f", "h264", "-"],
+                              input=data, capture_output=True, check=True)
+        proc = subprocess.run(["ffmpeg", "-v", "error", "-f", "h264", "-i", "-", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                              input=proc.stdout, capture_output=True, check=True)
+        data = proc.stdout[: w2 * h2 * 3]
+        crf = max(18, crf - 6)
+    out = rgb.copy()
+    out[:h2, :w2] = np.frombuffer(data, np.uint8).reshape(h2, w2, 3)
+    return out
+
+
+def degrade(image: np.ndarray, rng: random.Random, version: int = 2) -> np.ndarray:
+    """Soft-video proxy.
+
+    v1 (RealSR-calibrated JPEG chain, kept 0.60 of the sharp high-pass): downscale 0.35-0.65,
+    resample back, JPEG q25-55, blur σ0.5-1.3.
+    v2 (rival panel 2026-09-06): mixture — 55% x264 round trip at CRF 30-40 / 4:2:0 (what AI video
+    ships in), 20% the v1 JPEG chain, 10% "phone" (sensor noise + light blur, no codec), 15% clean
+    (tiny blur only) so the network learns to leave sharp input alone. Sensor noise before the
+    codec in half the samples; codec BEFORE blur; wider downscale/blur ranges."""
     h, w = image.shape[:2]
+    if version == 1:
+        pil = Image.fromarray((image * 255 + 0.5).astype(np.uint8))
+        f = rng.uniform(0.35, 0.65)
+        pil = pil.resize((max(64, int(w * f)), max(64, int(h * f))), Image.LANCZOS).resize((w, h), rng.choice([Image.BILINEAR, Image.BICUBIC, Image.LANCZOS]))
+        buf = io.BytesIO(); pil.save(buf, "JPEG", quality=rng.randint(25, 55)); buf.seek(0)
+        pil = Image.open(buf).convert("RGB").filter(ImageFilter.GaussianBlur(rng.uniform(0.5, 1.3)))
+        return np.asarray(pil).astype(np.float32) / 255
+    branch = rng.random()
     pil = Image.fromarray((image * 255 + 0.5).astype(np.uint8))
-    f = rng.uniform(0.35, 0.65)
+    if branch < 0.20:                                       # clean: already-sharp input, do (almost) nothing
+        pil = pil.filter(ImageFilter.GaussianBlur(rng.uniform(0.0, 0.4)))
+        return np.asarray(pil).astype(np.float32) / 255
+    if branch < 0.30:                                       # phone: noise + mild softness, no codec
+        arr = np.asarray(pil).astype(np.float32)
+        arr = arr + rng.uniform(1.0, 3.0) * np.random.default_rng(rng.randrange(1 << 30)).standard_normal(arr.shape).astype(np.float32)
+        pil = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(rng.uniform(0.4, 1.0)))
+        return np.asarray(pil).astype(np.float32) / 255
+    f = rng.uniform(0.55, 1.0)                              # real H3 frames: skin hp p10 1.26 / mean 2.28 / p90 3.75 vs sharp 3.05 — a WIDE range up to near-sharp
     pil = pil.resize((max(64, int(w * f)), max(64, int(h * f))), Image.LANCZOS).resize((w, h), rng.choice([Image.BILINEAR, Image.BICUBIC, Image.LANCZOS]))
-    buf = io.BytesIO(); pil.save(buf, "JPEG", quality=rng.randint(25, 55)); buf.seek(0)
-    pil = Image.open(buf).convert("RGB").filter(ImageFilter.GaussianBlur(rng.uniform(0.5, 1.3)))
+    arr = np.asarray(pil).astype(np.float32)
+    if rng.random() < 0.5:                                  # sensor noise before the codec
+        arr = arr + rng.uniform(0.5, 2.5) * np.random.default_rng(rng.randrange(1 << 30)).standard_normal(arr.shape).astype(np.float32)
+    arr = np.clip(arr, 0, 255).astype(np.uint8)
+    if branch < 0.50:                                       # JPEG chain (v1-like, wider)
+        buf = io.BytesIO(); Image.fromarray(arr).save(buf, "JPEG", quality=rng.randint(35, 75)); buf.seek(0)
+        arr = np.asarray(Image.open(buf).convert("RGB"))
+    else:                                                   # x264 round trip
+        arr = _x264_roundtrip(arr, rng.randint(22, 36), rng)
+    pil = Image.fromarray(arr).filter(ImageFilter.GaussianBlur(rng.uniform(0.0, 0.7)))
     return np.asarray(pil).astype(np.float32) / 255
 
 
 class Pairs:
     """Random skin-biased crops of (degraded, sharp, skin mask) from a list of sharp stills."""
 
-    def __init__(self, paths: list[Path], crop: int, masker: SkinMasker, seed: int = 0, cache: int = 48):
+    def __init__(self, paths: list[Path], crop: int, masker: SkinMasker, seed: int = 0, cache: int = 48, degrade_version: int = 2, mask_on_degraded: bool = True):
         self.paths, self.crop, self.masker, self.rng = paths, crop, masker, random.Random(seed)
+        self.degrade_version, self.mask_on_degraded = degrade_version, mask_on_degraded
         self.cache: dict[Path, tuple[np.ndarray, np.ndarray]] = {}
         self.cache_limit = cache
 
@@ -83,8 +134,9 @@ class Pairs:
         else:
             y0 = self.rng.randrange(0, h - c + 1); x0 = self.rng.randrange(0, w - c + 1)
         tgt = sharp[y0:y0 + c, x0:x0 + c]
-        soft = degrade(tgt, self.rng)
-        return soft, tgt, skin[y0:y0 + c, x0:x0 + c]
+        soft = degrade(tgt, self.rng, self.degrade_version)
+        mask = self.masker.skin(soft) if self.mask_on_degraded else skin[y0:y0 + c, x0:x0 + c]   # what inference sees
+        return soft, tgt, mask
 
 
 def features_for(soft: np.ndarray, skin: np.ndarray, frame_index: int) -> np.ndarray:
@@ -243,7 +295,7 @@ def cmd_calibrate(args) -> int:
         if lr.shape != hr.shape:
             lr = np.asarray(Image.fromarray((lr * 255 + 0.5).astype(np.uint8)).resize((hr.shape[1], hr.shape[0]), Image.BICUBIC)).astype(np.float32) / 255
         h, w = hr.shape[:2]; c = min(512, h, w); y0 = (h - c) // 2; x0 = (w - c) // 2
-        hr_c = hr[y0:y0 + c, x0:x0 + c]; lr_c = lr[y0:y0 + c, x0:x0 + c]; syn_c = degrade(hr_c, rng)
+        hr_c = hr[y0:y0 + c, x0:x0 + c]; lr_c = lr[y0:y0 + c, x0:x0 + c]; syn_c = degrade(hr_c, rng, args.version)
         hp = lambda a: float(highpass(torch.from_numpy(a)[None]).abs().mean())
         ps = lambda a, b: 10 * np.log10(1 / max(float(np.mean((a - b) ** 2)), 1e-10))
         real_psnr.append(ps(lr_c, hr_c)); real_ratio.append(hp(lr_c) / max(hp(hr_c), 1e-6))
@@ -251,6 +303,22 @@ def cmd_calibrate(args) -> int:
     print(f"pairs {len(real_psnr)}")
     print(f"real  soft vs sharp: PSNR {np.mean(real_psnr):.2f} dB, hp ratio {np.mean(real_ratio):.2f} (p10 {np.percentile(real_ratio, 10):.2f}, p90 {np.percentile(real_ratio, 90):.2f})")
     print(f"synth soft vs sharp: PSNR {np.mean(syn_psnr):.2f} dB, hp ratio {np.mean(syn_ratio):.2f} (p10 {np.percentile(syn_ratio, 10):.2f}, p90 {np.percentile(syn_ratio, 90):.2f})")
+    if args.h3_frames:
+        # absolute skin high-pass of real H3 frames vs of degraded FFHQ face crops (the training INPUT distribution)
+        masker = SkinMasker(device=args.device)
+        def skin_hp(img: np.ndarray) -> float | None:
+            m = masker.skin(img) > 0.9
+            if m.mean() < 0.02:
+                return None
+            e = highpass(torch.from_numpy(img)[None])[0].abs().mean(-1).numpy()
+            return float(e[m].mean()) * 255
+        h3 = [v for v in (skin_hp(load_image(p)) for p in sorted(Path(args.h3_frames).expanduser().glob("*.png"))) if v is not None]
+        faces = [p for p in (Path(x) for x in Path(args.dataset).read_text().split()) if "ffhq" in str(p)]
+        rng2 = random.Random(5); rng2.shuffle(faces)
+        train_in = [v for v in (skin_hp(degrade(load_image(p), rng2, args.version)) for p in faces[:40]) if v is not None]
+        train_tg = [v for v in (skin_hp(load_image(p)) for p in faces[:40]) if v is not None]
+        print(f"skin hp (×255): real H3 frames {np.mean(h3):.2f} (p10 {np.percentile(h3, 10):.2f}, p90 {np.percentile(h3, 90):.2f}, n={len(h3)}) | "
+              f"degraded train inputs {np.mean(train_in):.2f} (p10 {np.percentile(train_in, 10):.2f}, p90 {np.percentile(train_in, 90):.2f}) | sharp targets {np.mean(train_tg):.2f}")
     return 0
 
 
@@ -260,8 +328,8 @@ def split(dataset: Path, holdout: int) -> tuple[list[Path], list[Path]]:
     return paths[holdout:], paths[:holdout]
 
 
-def evaluate(pipe: NeuralRenderingPipeline, paths: list[Path], masker: SkinMasker, crop: int, n: int, device: str) -> dict:
-    pairs = Pairs(paths, crop, masker, seed=999)
+def evaluate(pipe: NeuralRenderingPipeline, paths: list[Path], masker: SkinMasker, crop: int, n: int, device: str, degrade_version: int = 2, mask_on_degraded: bool = True) -> dict:
+    pairs = Pairs(paths, crop, masker, seed=999, degrade_version=degrade_version, mask_on_degraded=mask_on_degraded)
     psnr_in, psnr_out, hp_in, hp_out, hp_tgt = [], [], [], [], []
     with torch.no_grad():
         for i in range(n):
@@ -282,7 +350,7 @@ def cmd_train(args) -> int:
     train_paths, hold_paths = split(Path(args.dataset), args.holdout)
     pipe, params, by_name = trainable_pipeline(Path(args.weights), args.device)
     masker = SkinMasker(device=args.device)
-    pairs = Pairs(train_paths, args.crop, masker, seed=args.seed)
+    pairs = Pairs(train_paths, args.crop, masker, seed=args.seed, degrade_version=args.degrade, mask_on_degraded=not args.mask_on_sharp)
     optimizer = torch.optim.AdamW(params, lr=args.lr, weight_decay=0.0, betas=(0.9, 0.99))
     weights = {"low": args.w_low, "hp": args.w_hp, "energy": args.w_energy, "dino": args.w_dino}
     dino = DinoPerceptual(args.device) if args.w_dino > 0 else None
@@ -290,9 +358,10 @@ def cmd_train(args) -> int:
     def note(msg: str) -> None:
         print(msg, flush=True); log.write(msg + "\n"); log.flush()
     note(f"loss weights {weights}")
+    note(f"degrade v{args.degrade}, mask on {'sharp' if args.mask_on_sharp else 'degraded'}")
     note(f"train {len(train_paths)} stills, holdout {len(hold_paths)}, {len(params)} trainable tensors, "
          f"{sum(p.numel() for p in params) / 1e6:.1f}M params, crop {args.crop}, batch {args.batch}, lr {args.lr}")
-    base_eval = evaluate(pipe, hold_paths, masker, args.crop, args.eval_n, args.device)
+    base_eval = evaluate(pipe, hold_paths, masker, args.crop, args.eval_n, args.device, args.degrade, not args.mask_on_sharp)
     note(f"step 0 eval {json.dumps({k: round(v, 3) for k, v in base_eval.items()})}")
     started = time.time()
     import math
@@ -315,7 +384,7 @@ def cmd_train(args) -> int:
         if step % args.log_every == 0 or step == 1:
             note(f"step {step} loss {loss.item():.4f} " + " ".join(f"{k} {v:.4f}" for k, v in parts.items()) + f" {(time.time() - started) / step:.2f}s/step")
         if step % args.eval_every == 0 or step == args.steps:
-            ev = evaluate(pipe, hold_paths, masker, args.crop, args.eval_n, args.device)
+            ev = evaluate(pipe, hold_paths, masker, args.crop, args.eval_n, args.device, args.degrade, not args.mask_on_sharp)
             note(f"step {step} eval {json.dumps({k: round(v, 3) for k, v in ev.items()})}")
             save_weights(by_name, Path(args.weights), out / f"dlssnr-ft-step{step}.safetensors")
             save_weights(by_name, Path(args.weights), out / "dlssnr-ft-latest.safetensors")
@@ -340,12 +409,17 @@ def main() -> int:
     b.add_argument("--min-sharp", type=float, default=0.0, help="drop stills whose centre-crop sharpness is below this (1.6 keeps the sharp ~40%% of FFHQ-1024)")
     c = sub.add_parser("calibrate"); c.add_argument("--realsr", required=True); c.add_argument("--n", type=int, default=60)
     c.add_argument("--scale", type=int, default=2, help="RealSR zoom factor folder to compare against (2 = mild optical softness, 4 = strong)")
+    c.add_argument("--version", type=int, default=2, help="degradation version (1 = JPEG chain, 2 = x264 mixture)")
+    c.add_argument("--h3-frames", default=None, help="folder of real H3 frame PNGs: compare their skin high-pass with the degraded training inputs")
+    c.add_argument("--dataset", default="ab/ft/dataset2.txt"); c.add_argument("--device", default="mps")
     t = sub.add_parser("train"); t.add_argument("--dataset", required=True); t.add_argument("--weights", required=True); t.add_argument("--out", required=True)
     t.add_argument("--steps", type=int, default=1500); t.add_argument("--batch", type=int, default=2); t.add_argument("--crop", type=int, default=256)
     t.add_argument("--lr", type=float, default=2e-5); t.add_argument("--seed", type=int, default=0); t.add_argument("--holdout", type=int, default=12)
     t.add_argument("--eval-every", type=int, default=250); t.add_argument("--eval-n", type=int, default=24); t.add_argument("--log-every", type=int, default=25)
     t.add_argument("--device", default="mps")
     t.add_argument("--cosine", action="store_true", help="100-step warmup then cosine decay of the learning rate to 5%%")
+    t.add_argument("--degrade", type=int, default=2, help="degradation version: 1 = JPEG chain (runs 1-5), 2 = x264 mixture (panel)")
+    t.add_argument("--mask-on-sharp", action="store_true", help="compute the skin mask on the sharp target (runs 1-5) instead of the degraded input")
     t.add_argument("--w-low", type=float, default=1.0); t.add_argument("--w-hp", type=float, default=0.5)
     t.add_argument("--w-energy", type=float, default=4.0); t.add_argument("--w-dino", type=float, default=0.0, help="DINOv2 perceptual weight (0 = off)")
     e = sub.add_parser("eval"); e.add_argument("--dataset", required=True); e.add_argument("--weights", required=True); e.add_argument("--weights2", default=None)

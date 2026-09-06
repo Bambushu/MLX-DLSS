@@ -99,6 +99,7 @@ class ConvertOptions:
     scene_cut_threshold: float = 0.3
     blend_scale: float = BLEND_SCALE
     auto_mask: str = "none"        # 'skin': per-frame face-parsing control mask (torch backend only)
+    noise_mode: str = "fresh"      # temporal (torch): fresh | frozen | zero | advected noise channels
     mask_floor: float = 0.0
     mask_feather: float = 8.0
     backend: str = "torch"         # 'torch' (this pipeline) or 'mlxdlss' (Swift Metal runtime via `mlxdlss stream`, macOS)
@@ -205,6 +206,7 @@ def convert(
                 profile=enhance.get("profile", "standard"), blend_scale=options.blend_scale, intensity=enhance.get("intensity", 1.0),
                 scene_cut_threshold=options.scene_cut_threshold, detail_strength=enhance.get("detail_strength", 1.0),
                 colour_strength=enhance.get("colour_strength", 1.0), detail_radius=enhance.get("detail_radius", 4.0),
+                noise_mode=options.noise_mode,
             ),
             motion=options.motion,
         )

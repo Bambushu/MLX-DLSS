@@ -223,6 +223,7 @@ class TemporalOptions:
     normalized_style: float | None = None
     local_tone_strength: float | None = None
     local_structure_strength: float | None = None
+    noise_mode: str = "fresh"       # fresh (vendor: new noise per frame) | frozen | zero | advected (noise field follows the motion)
 
 
 class TemporalSession:
@@ -248,11 +249,39 @@ class TemporalSession:
             raise ValueError("motion must be 'flow', 'zero' or a callable")
         self.history: np.ndarray | None = None
         self.previous: np.ndarray | None = None
+        self.noise_field: np.ndarray | None = None
         self.frame_index = 0
         self.scene_cuts = 0
+        if self.options.noise_mode not in ("fresh", "frozen", "zero", "advected"):
+            raise ValueError("noise_mode must be fresh, frozen, zero or advected")
 
     def reset(self) -> None:
-        self.history = None; self.previous = None; self.frame_index = 0
+        self.history = None; self.previous = None; self.noise_field = None; self.frame_index = 0
+
+    def _noise_channels(self, geometry: NetworkGeometry, motion: np.ndarray | None, height: int, width: int) -> np.ndarray | None:
+        """Replacement for feature channels 0-2 at the network extent, or None to keep the per-frame noise."""
+        mode = self.options.noise_mode
+        if mode == "fresh":
+            return None
+        if mode == "zero":
+            return np.zeros((geometry.network_height, geometry.network_width, 3), dtype=np.float32)
+        if mode == "frozen":
+            return deterministic_noise(geometry.network_height, geometry.network_width, 0)
+        if self.noise_field is None:
+            self.noise_field = deterministic_noise(height, width, 0)
+        elif motion is not None:
+            yy, xx = np.indices((height, width))
+            u = (xx.astype(np.float32) + np.float32(0.5)) / np.float32(width) + motion[..., 0]
+            v = (yy.astype(np.float32) + np.float32(0.5)) / np.float32(height) + motion[..., 1]
+            warped = sample_history(self.noise_field, u, v)
+            fresh = deterministic_noise(height, width, self.frame_index)
+            outside = (u < 0) | (u > 1) | (v < 0) | (v > 1)
+            warped = np.where(outside[..., None], fresh, warped)
+            ref_mean = self.noise_field.reshape(-1, 3).mean(0); ref_std = self.noise_field.reshape(-1, 3).std(0) + np.float32(1e-6)
+            mean = warped.reshape(-1, 3).mean(0); std = warped.reshape(-1, 3).std(0) + np.float32(1e-6)
+            self.noise_field = ((warped - mean) / std * ref_std + ref_mean).astype(np.float32)   # bilinear taps shrink the variance
+        rows, columns = geometry.source_rows(), geometry.source_columns()
+        return self.noise_field[rows[:, None], columns[None, :], :]
 
     def _controls(self) -> dict[str, float]:
         controls = dict(PROFILES[self.options.profile])
@@ -273,6 +302,9 @@ class TemporalSession:
         controls = self._controls()
         if self.history is None:
             network = make_features(frame, frame_index=self.frame_index, geometry=geometry, control_mask=control_mask, skin_mask=skin_mask, **controls)
+            noise = self._noise_channels(geometry, None, height, width)
+            if noise is not None:
+                network[..., 0:3] = noise
             head = geometry.crop(self.pipeline.run_features(network))
             output = compose_head(head, frame, control_mask=control_mask, intensity=self.options.intensity)
         else:
@@ -280,6 +312,9 @@ class TemporalSession:
                 motion = self.motion(frame, self.previous)
             features = make_temporal_features(frame, self.history, motion, frame_index=self.frame_index, control_mask=control_mask, skin_mask=skin_mask, **controls)
             network = extend_features(features, geometry, self.frame_index)
+            noise = self._noise_channels(geometry, motion, height, width)
+            if noise is not None:
+                network[..., 0:3] = noise
             head = geometry.crop(self.pipeline.run_features(network))
             output = compose_temporal(head, frame, features, blend_scale=self.options.blend_scale, control_mask=control_mask, intensity=self.options.intensity)
         self.history = output; self.previous = frame; self.frame_index += 1
