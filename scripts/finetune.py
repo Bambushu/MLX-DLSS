@@ -206,6 +206,13 @@ def free_percent() -> float:
     return float(m.group(1)) if m else 100.0
 
 
+def swap_used_gb() -> float:
+    import subprocess, re
+    out = subprocess.run(["sysctl", "-n", "vm.swapusage"], capture_output=True, text=True).stdout
+    m = re.search(r"used = ([0-9.]+)M", out)
+    return float(m.group(1)) / 1024 if m else 0.0
+
+
 def act_penalty() -> tuple[torch.Tensor | float, float]:
     """Sum over every E4M3 site of mean((|v| - ceil)+ / ceil)^2 since the last reset, and the max |activation|."""
     pen, amax = ACT["pen"], ACT["max"]; ACT["pen"] = 0.0; ACT["max"] = 0.0; ACT["i"] = 0
@@ -622,8 +629,8 @@ def cmd_train(args) -> int:
             note(f"step {step}: non-finite loss, step skipped")
         if step % args.log_every == 0 or step == 1:
             note(f"step {step} loss {loss.item():.4f} " + " ".join(f"{k} {v:.4f}" for k, v in parts.items()) + f" {(time.time() - started) / step:.2f}s/step")
-        if step % 10 == 0 and (free := free_percent()) < args.min_free_pct:      # memory watchdog: leave before the OS kills the machine
-            note(f"step {step}: only {free:.0f}% memory free (< {args.min_free_pct}%), saving and stopping")
+        if step % 10 == 0 and ((free := free_percent()) < args.min_free_pct or (swap := swap_used_gb()) > args.max_swap_gb):   # memory watchdog: leave before the OS kills the machine
+            note(f"step {step}: memory watchdog ({free:.0f}% free, {swap_used_gb():.1f} GB swap), saving and stopping")
             save_weights(by_name, Path(args.weights), out / "dlssnr-ft-latest.safetensors")
             return 3
         if step % args.eval_every == 0 or step == args.steps:
@@ -668,6 +675,7 @@ def main() -> int:
     t.add_argument("--lap-contrast", type=float, default=1.0, help="multiplier on the per-band contrast term inside --w-lap")
     t.add_argument("--w-lap", type=float, default=0.0, help="multi-scale Laplacian + variance + anti-halo/anti-mottle hinges (plan C); use with --w-energy 0")
     t.add_argument("--lap-terms", default="band,var,halo,mottle", help="which plan-C sub-terms are active (ablation)")
+    t.add_argument("--max-swap-gb", type=float, default=16.0, help="memory watchdog: stop (exit 3) when swap in use exceeds this")
     t.add_argument("--min-free-pct", type=float, default=12.0, help="memory watchdog: stop (exit 3) when macOS free-memory percentage drops below this")
     t.add_argument("--w-act", type=float, default=10.0, help="FP8 envelope barrier: penalty on |activation| above 256 at every E4M3 site (0 = off)")
     t.add_argument("--w-temporal", type=float, default=0.0, help="plan D: synthetic-flow two-frame consistency on the high-pass (0 = off); doubles the forward cost")
