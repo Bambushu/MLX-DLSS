@@ -539,7 +539,11 @@ def cmd_train(args) -> int:
                 g_loss, gparts = adversarial(pred, tgt, soft, step); loss = loss + g_loss; parts.update(gparts)
             optimizer.zero_grad(set_to_none=True)
             if torch.isfinite(loss):
-                loss.backward(); torch.nn.utils.clip_grad_norm_(params, 1.0); optimizer.step()
+                loss.backward(); gnorm = torch.nn.utils.clip_grad_norm_(params, 1.0)
+                if torch.isfinite(gnorm):
+                    optimizer.step()
+                else:
+                    note(f"step {step}: non-finite grad norm, step skipped")
             else:
                 note(f"step {step}: non-finite loss, step skipped")
             if args.cosine:
@@ -571,8 +575,11 @@ def cmd_train(args) -> int:
         optimizer.zero_grad(set_to_none=True)
         if torch.isfinite(loss):
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(params, 1.0)
-            optimizer.step()
+            gnorm = torch.nn.utils.clip_grad_norm_(params, 1.0)
+            if torch.isfinite(gnorm):
+                optimizer.step()
+            else:
+                note(f"step {step}: non-finite grad norm, step skipped")
         else:
             note(f"step {step}: non-finite loss, step skipped")
         if step % args.log_every == 0 or step == 1:
