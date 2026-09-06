@@ -194,12 +194,21 @@ def features_for(soft: np.ndarray, skin: np.ndarray, frame_index: int) -> np.nda
 # ----------------------------------------------------------------------------- model
 
 ACT_CEIL = 256.0   # E4M3 saturates at 448 and the gate multiplies in fp16; run7 (2026-09-06) walked activations to 5000+
-ACT = {"pen": 0.0, "max": 0.0}
+ACT = {"pen": 0.0, "max": 0.0, "i": 0}
+ACT_EVERY = 20     # penalise every 20th E4M3 site (~74 of 1476); all 1476 retained an extra activation each and rebooted the Mac 2026-09-06
+
+
+def free_percent() -> float:
+    """macOS kernel's own 'system-wide memory free percentage' (memory_pressure), 100 = idle."""
+    import subprocess, re
+    out = subprocess.run(["memory_pressure"], capture_output=True, text=True).stdout
+    m = re.search(r"free percentage:\s+(\d+)%", out)
+    return float(m.group(1)) if m else 100.0
 
 
 def act_penalty() -> tuple[torch.Tensor | float, float]:
     """Sum over every E4M3 site of mean((|v| - ceil)+ / ceil)^2 since the last reset, and the max |activation|."""
-    pen, amax = ACT["pen"], ACT["max"]; ACT["pen"] = 0.0; ACT["max"] = 0.0
+    pen, amax = ACT["pen"], ACT["max"]; ACT["pen"] = 0.0; ACT["max"] = 0.0; ACT["i"] = 0
     amax = float(amax.item()) if torch.is_tensor(amax) else amax
     return pen, amax
 
@@ -207,9 +216,10 @@ def trainable_pipeline(weights: Path, device: str) -> tuple[NeuralRenderingPipel
     orig = M.e4m3_round_trip
     def ste(v):                                            # straight-through estimator + FP8 envelope barrier
         if torch.is_grad_enabled() and v.requires_grad:
-            a = v.abs()
-            ACT["pen"] = ACT["pen"] + (torch.relu(a - ACT_CEIL) / ACT_CEIL).square().mean()
-            m = a.detach().max(); ACT["max"] = m if isinstance(ACT["max"], float) else torch.maximum(ACT["max"], m)
+            m = v.detach().abs().max(); ACT["max"] = m if isinstance(ACT["max"], float) else torch.maximum(ACT["max"], m)
+            ACT["i"] += 1
+            if ACT["i"] % ACT_EVERY == 0:                 # sparse: the barrier graph keeps an activation-sized tensor per site
+                ACT["pen"] = ACT["pen"] + (torch.relu(v.abs() - ACT_CEIL) / ACT_CEIL).square().mean()
         return v + (orig(v) - v).detach()
     M.e4m3_round_trip = ste
     pipe = NeuralRenderingPipeline.from_safetensors(weights, device=device, precision="reference")
@@ -612,6 +622,10 @@ def cmd_train(args) -> int:
             note(f"step {step}: non-finite loss, step skipped")
         if step % args.log_every == 0 or step == 1:
             note(f"step {step} loss {loss.item():.4f} " + " ".join(f"{k} {v:.4f}" for k, v in parts.items()) + f" {(time.time() - started) / step:.2f}s/step")
+        if step % 10 == 0 and (free := free_percent()) < args.min_free_pct:      # memory watchdog: leave before the OS kills the machine
+            note(f"step {step}: only {free:.0f}% memory free (< {args.min_free_pct}%), saving and stopping")
+            save_weights(by_name, Path(args.weights), out / "dlssnr-ft-latest.safetensors")
+            return 3
         if step % args.eval_every == 0 or step == args.steps:
             ev = evaluate(pipe, hold_paths, masker, args.crop, args.eval_n, args.device, args.degrade, not args.mask_on_sharp)
             note(f"step {step} eval {json.dumps({k: round(v, 3) for k, v in ev.items()})}")
@@ -654,6 +668,7 @@ def main() -> int:
     t.add_argument("--lap-contrast", type=float, default=1.0, help="multiplier on the per-band contrast term inside --w-lap")
     t.add_argument("--w-lap", type=float, default=0.0, help="multi-scale Laplacian + variance + anti-halo/anti-mottle hinges (plan C); use with --w-energy 0")
     t.add_argument("--lap-terms", default="band,var,halo,mottle", help="which plan-C sub-terms are active (ablation)")
+    t.add_argument("--min-free-pct", type=float, default=12.0, help="memory watchdog: stop (exit 3) when macOS free-memory percentage drops below this")
     t.add_argument("--w-act", type=float, default=10.0, help="FP8 envelope barrier: penalty on |activation| above 256 at every E4M3 site (0 = off)")
     t.add_argument("--w-temporal", type=float, default=0.0, help="plan D: synthetic-flow two-frame consistency on the high-pass (0 = off); doubles the forward cost")
     t.add_argument("--w-adv", type=float, default=0.0, help="plan E: band-limited PatchGAN hinge weight on the generator (0 = off; start 0.005)")
