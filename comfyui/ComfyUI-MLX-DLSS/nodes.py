@@ -213,10 +213,121 @@ class MLXDLSSNeuralRenderingMetal:
         return (torch.stack(outputs), cuts)
 
 
+# ----------------------------------------------------------------------------- upscale (resample or model, then neural re-detail)
+
+RESAMPLERS = {"lanczos": "LANCZOS", "bicubic": "BICUBIC"}
+
+
+def _resample(frame: np.ndarray, size: tuple[int, int], method: str) -> np.ndarray:
+    from PIL import Image
+
+    resample = getattr(Image, RESAMPLERS[method])
+    return np.asarray(Image.fromarray(_to_uint8(torch.from_numpy(frame))).resize(size, resample)).astype(np.float32) / 255.0
+
+
+def _upscale(frame: np.ndarray, size: tuple[int, int], method: str, upscale_model, device) -> np.ndarray:
+    """(H, W, 3) float in [0, 1] -> (size[1], size[0], 3). ``upscale_model`` is ComfyUI's UPSCALE_MODEL (spandrel);
+    its fixed 2x/4x output is Lanczos-resampled to the exact target."""
+    if method == "upscale_model":
+        if upscale_model is None:
+            raise ValueError("method upscale_model needs an UPSCALE_MODEL input (ComfyUI's Load Upscale Model)")
+        model = upscale_model.to(device) if hasattr(upscale_model, "to") else upscale_model
+        with torch.no_grad():
+            big = model(torch.from_numpy(frame).permute(2, 0, 1)[None].to(device)).clamp(0, 1)[0].permute(1, 2, 0).cpu().numpy()
+        return big if big.shape[:2] == (size[1], size[0]) else _resample(big, size, "lanczos")
+    return _resample(frame, size, method)
+
+
+def _masker(renderer, auto_mask: str, mask_feather: float):
+    if auto_mask != "skin":
+        return None
+    from mlxdlss.automask import SkinMasker
+
+    key = ("masker", str(renderer.device), float(mask_feather))
+    if key not in _cache:
+        _cache[key] = SkinMasker(device=renderer.device, feather_sigma=float(mask_feather))
+    return _cache[key]
+
+
+UPSCALE_INPUTS = {
+    "scale_factor": ("FLOAT", {"default": 1.5, "min": 1.0, "max": 4.0, "step": 0.25, "tooltip": "1.5 = the sweet spot; pixels come from the resampler/model, detail from the renderer"}),
+    "method": (["lanczos", "bicubic", "upscale_model"], {"default": "lanczos", "tooltip": "upscale_model: plug ComfyUI's Load Upscale Model (SPAN/ESRGAN...) into upscale_model"}),
+    "detail_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 8.0, "step": 0.1}),
+    "colour_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 4.0, "step": 0.1, "tooltip": "fine-tuned weights: 1; stock weights: 0.5"}),
+    "intensity": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.05}),
+    "auto_mask": (["skin", "none"], {"default": "skin"}),
+    "mask_floor": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.05}),
+    "mask_feather": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 64.0, "step": 1.0}),
+    "noise_frame_index": ("INT", {"default": 0, "min": 0, "max": 1_000_000}),
+}
+
+
+class MLXDLSSImageUpscale:
+    """Image (batch) upscale: resampler or upscale model for the pixels, then the neural renderer at processing
+    scale 1 for the detail. Defaults = the fine-tune recipe (use the fine-tuned weights in the loader)."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"renderer": ("MLXDLSS_RENDERER",), "image": ("IMAGE",), **UPSCALE_INPUTS},
+                "optional": {"upscale_model": ("UPSCALE_MODEL",)}}
+
+    RETURN_TYPES = ("IMAGE",)
+    FUNCTION = "upscale"
+    CATEGORY = CATEGORY
+
+    def upscale(self, renderer, image, scale_factor, method, detail_strength, colour_strength, intensity, auto_mask, mask_floor, mask_feather,
+                noise_frame_index, upscale_model=None):
+        masker = _masker(renderer, auto_mask, mask_feather)
+        size = (round(image.shape[2] * float(scale_factor)), round(image.shape[1] * float(scale_factor)))
+        outputs = []
+        for index in range(image.shape[0]):
+            frame = _upscale(image[index].detach().float().clamp(0, 1).cpu().numpy(), size, method, upscale_model, renderer.device)
+            mask = masker.mask(frame, floor=float(mask_floor)) if masker is not None else None
+            result = renderer.enhance(frame, profile="standard", processing_scale=1.0, detail_strength=float(detail_strength), colour_strength=float(colour_strength),
+                                      intensity=float(intensity), frame_index=int(noise_frame_index) + index, skin_mask=mask)
+            outputs.append(torch.from_numpy(np.clip(result.image, 0, 1).astype(np.float32)))
+        return (torch.stack(outputs),)
+
+
+class MLXDLSSVideoUpscale:
+    """Video upscale: the image path per frame plus the temporal session (optical-flow history, gated high-pass
+    history blend against shimmer, scene-cut reset). Needs `pip install 'mlxdlss[video]'` for the flow."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"renderer": ("MLXDLSS_RENDERER",), "image": ("IMAGE",), **UPSCALE_INPUTS,
+                             "hp_history": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 0.9, "step": 0.05, "tooltip": "history weight on the high-pass band: 0.5-0.7 removes static shimmer for ~5% detail"}),
+                             "scene_cut": ("FLOAT", {"default": 0.15, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "mean luma change that resets the history (0 = never)"})},
+                "optional": {"upscale_model": ("UPSCALE_MODEL",)}}
+
+    RETURN_TYPES = ("IMAGE", "INT")
+    RETURN_NAMES = ("image", "scene_cuts")
+    FUNCTION = "upscale"
+    CATEGORY = CATEGORY
+
+    def upscale(self, renderer, image, scale_factor, method, detail_strength, colour_strength, intensity, auto_mask, mask_floor, mask_feather,
+                noise_frame_index, hp_history, scene_cut, upscale_model=None):
+        from mlxdlss.temporal import TemporalOptions, TemporalSession
+
+        masker = _masker(renderer, auto_mask, mask_feather)
+        size = (round(image.shape[2] * float(scale_factor)), round(image.shape[1] * float(scale_factor)))
+        session = TemporalSession(renderer, options=TemporalOptions(
+            profile="standard", detail_strength=float(detail_strength), colour_strength=float(colour_strength), intensity=float(intensity),
+            scene_cut_threshold=float(scene_cut) if scene_cut > 0 else 2.0, hp_history=float(hp_history)))
+        outputs = []
+        for index in range(image.shape[0]):
+            frame = _upscale(image[index].detach().float().clamp(0, 1).cpu().numpy(), size, method, upscale_model, renderer.device)
+            mask = masker.mask(frame, floor=float(mask_floor)) if masker is not None else None
+            outputs.append(torch.from_numpy(np.clip(session.process(frame, skin_mask=mask), 0, 1).astype(np.float32)))
+        return (torch.stack(outputs), int(session.scene_cuts))
+
+
 NODE_CLASS_MAPPINGS = {
     "MLXDLSSLoadRenderer": MLXDLSSLoadRenderer,
     "MLXDLSSNeuralRendering": MLXDLSSNeuralRendering,
     "MLXDLSSNeuralRenderingMetal": MLXDLSSNeuralRenderingMetal,
+    "MLXDLSSImageUpscale": MLXDLSSImageUpscale,
+    "MLXDLSSVideoUpscale": MLXDLSSVideoUpscale,
     "MLXDLSSLoadFrameGen": MLXDLSSLoadFrameGen,
     "MLXDLSSFrameGeneration": MLXDLSSFrameGeneration,
 }
@@ -224,6 +335,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MLXDLSSLoadRenderer": "MLX-DLSS Load Neural Renderer",
     "MLXDLSSNeuralRendering": "MLX-DLSS Neural Rendering (detail + tone)",
     "MLXDLSSNeuralRenderingMetal": "MLX-DLSS Neural Rendering VIDEO (Metal, temporal)",
+    "MLXDLSSImageUpscale": "MLX-DLSS Image Upscale (resample + neural re-detail)",
+    "MLXDLSSVideoUpscale": "MLX-DLSS Video Upscale (resample + neural re-detail, temporal)",
     "MLXDLSSLoadFrameGen": "MLX-DLSS Load Frame Generator",
     "MLXDLSSFrameGeneration": "MLX-DLSS Frame Generation (interpolate)",
 }

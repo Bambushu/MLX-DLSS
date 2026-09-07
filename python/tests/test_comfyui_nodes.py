@@ -81,3 +81,31 @@ class ComfyNodeTests(unittest.TestCase):
         one = torch.zeros((1, 8, 8, 3))
         out, cuts = n.MLXDLSSFrameGeneration().generate(fg, one, 2, 0.15, 4)
         self.assertEqual(out.shape[0], 1); self.assertEqual(cuts, 0)
+
+    def test_image_upscale_node_scales_then_redetails(self):
+        n = self.nodes
+        (renderer,) = n.MLXDLSSLoadRenderer().load(str(self.renderer_weights), "cpu", "reference")
+        image = torch.from_numpy(np.random.default_rng(2).random((2, 16, 24, 3), dtype=np.float32))
+        (out,) = n.MLXDLSSImageUpscale().upscale(renderer, image, 1.5, "lanczos", 1.0, 1.0, 1.0, "none", 0.0, 8.0, 0)
+        self.assertEqual(tuple(out.shape), (2, 24, 36, 3))
+        with self.assertRaises(ValueError):
+            n.MLXDLSSImageUpscale().upscale(renderer, image, 2.0, "upscale_model", 1.0, 1.0, 1.0, "none", 0.0, 8.0, 0)
+
+    def test_image_upscale_node_runs_an_upscale_model(self):
+        n = self.nodes
+        (renderer,) = n.MLXDLSSLoadRenderer().load(str(self.renderer_weights), "cpu", "reference")
+        image = torch.from_numpy(np.random.default_rng(3).random((1, 16, 24, 3), dtype=np.float32))
+        model = torch.nn.Upsample(scale_factor=2, mode="bilinear")            # stands in for a spandrel 2x descriptor
+        (out,) = n.MLXDLSSImageUpscale().upscale(renderer, image, 1.5, "upscale_model", 1.0, 1.0, 1.0, "none", 0.0, 8.0, 0, upscale_model=model)
+        self.assertEqual(tuple(out.shape), (1, 24, 36, 3))
+
+    def test_video_upscale_node_keeps_history(self):
+        n = self.nodes
+        try:
+            import cv2  # noqa: F401
+        except ImportError:
+            self.skipTest("opencv not installed")
+        (renderer,) = n.MLXDLSSLoadRenderer().load(str(self.renderer_weights), "cpu", "reference")
+        frames = torch.from_numpy(np.random.default_rng(4).random((3, 16, 24, 3), dtype=np.float32))
+        out, cuts = n.MLXDLSSVideoUpscale().upscale(renderer, frames, 1.5, "bicubic", 1.0, 1.0, 1.0, "none", 0.0, 8.0, 0, 0.5, 0.15)
+        self.assertEqual(tuple(out.shape), (3, 24, 36, 3)); self.assertIsInstance(cuts, int)
