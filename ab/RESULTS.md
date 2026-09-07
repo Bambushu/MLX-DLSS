@@ -446,3 +446,23 @@ Final-run lr = 6e-6 unless rank.py disagrees.
 - (b) Metal package vs torch, H3 frame, no mask: torch↔Metal 51.1 dB (stock), 47.9 dB (v2); fine-tune effect vs stock 30.9 dB on BOTH paths — the .dlssmodel keeps the fine-tune through FP8 packing.
 - (c) frozen 141/649 tensors = attn_scale 70, attn_bias 62, attention_scalar 8, blend_scale 1: recovered constants with no gradient path; nothing trainable is excluded.
 - pyiqa metrics must run on CPU (MPS lacks non-divisible adaptive pooling); rendering stays on MPS.
+
+### rank.py (12 checkpoints; NR = perceived quality on 31 H3 frames, higher better; LPIPS/DISTS vs RealSR HR, lower better) — 31 stills, 31 RealSR pairs, fine-tune recipe
+
+| weights | musiq | clipiqa | topiq_nr | lpips | dists |
+|---|---|---|---|---|---|
+| input | 73.5028 | 0.5821 | 0.5592 | 0.1377 | 0.1065 |
+| v2 | 74.7369 | 0.6083 | 0.5837 | 0.1115 | 0.0993 |
+| v1-crisp | 75.4634 | 0.6137 | 0.6059 | 0.1122 | 0.1025 |
+| v1 | 75.3582 | 0.6143 | 0.5981 | 0.1112 | 0.1015 |
+| run7 (C) | 74.6166 | 0.6079 | 0.5808 | 0.1039 | 0.0951 |
+| run8 (D) | 74.0969 | 0.6033 | 0.5679 | 0.1175 | 0.0995 |
+| run9 (E) | 74.3127 | 0.6021 | 0.5765 | 0.1032 | 0.0942 |
+| sw control 3e-6 | 74.5642 | 0.6049 | 0.5805 | 0.1049 | 0.0956 |
+| sw lr6e6 | 74.5043 | 0.6035 | 0.5791 | 0.1033 | 0.0947 |
+| sw lr6e6 EMA | 74.4833 | 0.6029 | 0.5791 | 0.1033 | 0.0944 |
+| sw lr1e5 | 74.4298 | 0.6042 | 0.5782 | 0.1019 | 0.0952 |
+| sw lr1e5 EMA | 74.4024 | 0.6025 | 0.5778 | 0.1018 | 0.0949 |
+| sw late | 74.5555 | 0.6047 | 0.5818 | 0.1056 | 0.0960 |
+
+Reading: perceived quality favours crisp/v1 (MUSIQ 75.4, TOPIQ 0.60); fidelity favours the plan-C family (run9 DISTS 0.094, lr1e5-EMA LPIPS 0.102). v2 is the worst fine-tune on LPIPS. The two families trade sharpness against faithfulness; the blind A/B decides, the final run merges them (from crisp, plan-C hinges, lr 6e-6, dataset3, EMA).
