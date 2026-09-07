@@ -66,6 +66,7 @@ class MLXDLSSNeuralRendering:
             "mask_floor": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.05, "tooltip": "skin-channel value outside the detected face (chest/arms are not detected)"}),
             "mask_feather": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 64.0, "step": 1.0}),
             "noise_frame_index": ("INT", {"default": 0, "min": 0, "max": 1_000_000, "tooltip": "deterministic noise seed; advanced per frame for batches"}),
+            "degrid": ("BOOLEAN", {"default": True, "tooltip": "notch the fine-tunes' period-4 token grid out of the residual (no effect on stock weights)"}),
         }, "optional": {
             "skin_mask": ("MASK", {"tooltip": "your own (batch, height, width) skin mask; overrides auto_mask"}),
         }}
@@ -76,7 +77,7 @@ class MLXDLSSNeuralRendering:
     CATEGORY = CATEGORY
 
     def render(self, renderer, image, profile, processing_scale, detail_strength, colour_strength, detail_radius, intensity,
-               auto_mask, mask_floor, mask_feather, noise_frame_index, skin_mask=None):
+               auto_mask, mask_floor, mask_feather, noise_frame_index, degrid=True, skin_mask=None):
         masker = None
         if skin_mask is None and auto_mask == "skin":
             from mlxdlss.automask import SkinMasker
@@ -99,7 +100,7 @@ class MLXDLSSNeuralRendering:
             result = renderer.enhance(
                 frame, profile=profile, processing_scale=float(processing_scale), detail_strength=float(detail_strength),
                 colour_strength=float(colour_strength), detail_radius=float(detail_radius), intensity=float(intensity),
-                frame_index=int(noise_frame_index) + index, skin_mask=mask,
+                frame_index=int(noise_frame_index) + index, skin_mask=mask, degrid=bool(degrid),
             )
             outputs.append(torch.from_numpy(np.clip(result.image, 0, 1).astype(np.float32)))
             masks.append(torch.from_numpy((mask if mask is not None else np.zeros(frame.shape[:2], dtype=np.float32)).astype(np.float32)))
@@ -259,6 +260,7 @@ UPSCALE_INPUTS = {
     "mask_floor": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.05}),
     "mask_feather": ("FLOAT", {"default": 8.0, "min": 0.0, "max": 64.0, "step": 1.0}),
     "noise_frame_index": ("INT", {"default": 0, "min": 0, "max": 1_000_000}),
+    "degrid": ("BOOLEAN", {"default": True, "tooltip": "notch the fine-tunes' period-4 token grid out of the residual"}),
 }
 
 
@@ -276,7 +278,7 @@ class MLXDLSSImageUpscale:
     CATEGORY = CATEGORY
 
     def upscale(self, renderer, image, scale_factor, method, detail_strength, colour_strength, intensity, auto_mask, mask_floor, mask_feather,
-                noise_frame_index, upscale_model=None):
+                noise_frame_index, degrid=True, upscale_model=None):
         masker = _masker(renderer, auto_mask, mask_feather)
         size = (round(image.shape[2] * float(scale_factor)), round(image.shape[1] * float(scale_factor)))
         outputs = []
@@ -284,7 +286,7 @@ class MLXDLSSImageUpscale:
             frame = _upscale(image[index].detach().float().clamp(0, 1).cpu().numpy(), size, method, upscale_model, renderer.device)
             mask = masker.mask(frame, floor=float(mask_floor)) if masker is not None else None
             result = renderer.enhance(frame, profile="standard", processing_scale=1.0, detail_strength=float(detail_strength), colour_strength=float(colour_strength),
-                                      intensity=float(intensity), frame_index=int(noise_frame_index) + index, skin_mask=mask)
+                                      intensity=float(intensity), frame_index=int(noise_frame_index) + index, skin_mask=mask, degrid=bool(degrid))
             outputs.append(torch.from_numpy(np.clip(result.image, 0, 1).astype(np.float32)))
         return (torch.stack(outputs),)
 
@@ -306,14 +308,14 @@ class MLXDLSSVideoUpscale:
     CATEGORY = CATEGORY
 
     def upscale(self, renderer, image, scale_factor, method, detail_strength, colour_strength, intensity, auto_mask, mask_floor, mask_feather,
-                noise_frame_index, hp_history, scene_cut, upscale_model=None):
+                noise_frame_index, degrid, hp_history, scene_cut, upscale_model=None):
         from mlxdlss.temporal import TemporalOptions, TemporalSession
 
         masker = _masker(renderer, auto_mask, mask_feather)
         size = (round(image.shape[2] * float(scale_factor)), round(image.shape[1] * float(scale_factor)))
         session = TemporalSession(renderer, options=TemporalOptions(
             profile="standard", detail_strength=float(detail_strength), colour_strength=float(colour_strength), intensity=float(intensity),
-            scene_cut_threshold=float(scene_cut) if scene_cut > 0 else 2.0, hp_history=float(hp_history)))
+            scene_cut_threshold=float(scene_cut) if scene_cut > 0 else 2.0, hp_history=float(hp_history), degrid=bool(degrid)))
         outputs = []
         for index in range(image.shape[0]):
             frame = _upscale(image[index].detach().float().clamp(0, 1).cpu().numpy(), size, method, upscale_model, renderer.device)

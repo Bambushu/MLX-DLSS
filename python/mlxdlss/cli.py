@@ -49,6 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--detail-strength", type=float, default=1.0)
     run.add_argument("--colour-strength", type=float, default=1.0)
     run.add_argument("--detail-radius", type=float, default=4.0)
+    run.add_argument("--no-degrid", action="store_true", help="keep the fine-tunes' period-4 token grid (default: notched out of the residual)")
     run.add_argument("--intensity", type=float, default=1.0)
     run.add_argument("--noise-frame-index", type=int, default=0)
     run.add_argument("--control-mask", type=pathlib.Path, help="RGB mask image: red blend, green tone, blue structure")
@@ -89,6 +90,7 @@ def main(argv: list[str] | None = None) -> int:
         detail_strength=args.detail_strength,
         colour_strength=args.colour_strength,
         detail_radius=args.detail_radius,
+        degrid=not args.no_degrid,
         intensity=args.intensity,
         frame_index=args.noise_frame_index,
         control_mask=control_mask,

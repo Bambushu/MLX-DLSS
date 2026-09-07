@@ -168,7 +168,7 @@ def convert(
     encode += list(DEFAULT_ENCODE_ARGS if options.encode_args is None else options.encode_args)
     encode += [str(destination)]
     enhance = dict(options.enhance)
-    finish_keys = {"detail_strength", "colour_strength", "detail_radius", "intensity"}
+    finish_keys = {"detail_strength", "colour_strength", "detail_radius", "intensity", "degrid"}
     finish_options = {k: v for k, v in enhance.items() if k in finish_keys}
     prepare_options = {k: v for k, v in enhance.items() if k not in finish_keys}
     expected = info.frame_count
@@ -198,7 +198,7 @@ def convert(
             scene_cut_threshold=options.scene_cut_threshold, mlxdlss=options.mlxdlss, profile=enhance.get("profile", "standard"),
             intensity=enhance.get("intensity", 1.0), execution=options.execution, precision=options.precision,
             processing_scale=enhance.get("processing_scale", 1.0), detail_strength=enhance.get("detail_strength", 1.0),
-            colour_strength=enhance.get("colour_strength", 1.0), detail_radius=enhance.get("detail_radius", 4.0),
+            colour_strength=enhance.get("colour_strength", 1.0), detail_radius=enhance.get("detail_radius", 4.0), degrid=enhance.get("degrid", False),
         )
     elif options.temporal:
         session = TemporalSession(
@@ -206,7 +206,7 @@ def convert(
             options=TemporalOptions(
                 profile=enhance.get("profile", "standard"), blend_scale=options.blend_scale, intensity=enhance.get("intensity", 1.0),
                 scene_cut_threshold=options.scene_cut_threshold, detail_strength=enhance.get("detail_strength", 1.0),
-                colour_strength=enhance.get("colour_strength", 1.0), detail_radius=enhance.get("detail_radius", 4.0),
+                colour_strength=enhance.get("colour_strength", 1.0), detail_radius=enhance.get("detail_radius", 4.0), degrid=enhance.get("degrid", False),
                 noise_mode=options.noise_mode, hp_history=options.hp_history,
             ),
             motion=options.motion,

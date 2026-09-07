@@ -184,6 +184,7 @@ class NeuralRenderingPipeline:
         colour_strength: float = 1.0,
         detail_radius: float = 4.0,
         intensity: float = 1.0,
+        degrid: bool = False,
         network_seconds: float = 0.0,
     ) -> EnhanceResult:
         """Compose the head over the frame, resample back and apply the detail/colour split."""
@@ -194,7 +195,8 @@ class NeuralRenderingPipeline:
         if composed.shape[:2] != prepared.source.shape[:2]:
             composed = resample(composed, prepared.source.shape[1], prepared.source.shape[0])
         output = compose_detail(
-            prepared.source, composed, detail_strength=detail_strength, colour_strength=colour_strength, radius=detail_radius
+            prepared.source, composed, detail_strength=detail_strength, colour_strength=colour_strength, radius=detail_radius,
+            degrid_period=4 if degrid else 0,
         )
         timings = {
             "preprocess": prepared.preprocess_seconds,
@@ -213,6 +215,7 @@ class NeuralRenderingPipeline:
         colour_strength: float = 1.0,
         detail_radius: float = 4.0,
         intensity: float = 1.0,
+        degrid: bool = False,
         frame_index: int = 0,
         control_mask: np.ndarray | None = None,
         skin_mask: np.ndarray | None = None,
@@ -230,7 +233,7 @@ class NeuralRenderingPipeline:
         started = time.perf_counter()
         head = self.run_features(prepared.features)
         return self.finish(
-            prepared, head, detail_strength=detail_strength, colour_strength=colour_strength, detail_radius=detail_radius,
+            prepared, head, detail_strength=detail_strength, colour_strength=colour_strength, detail_radius=detail_radius, degrid=degrid,
             intensity=intensity, network_seconds=time.perf_counter() - started,
         )
 

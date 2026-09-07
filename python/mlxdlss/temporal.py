@@ -220,6 +220,7 @@ class TemporalOptions:
     detail_strength: float = 1.0
     colour_strength: float = 1.0
     detail_radius: float = 4.0
+    degrid: bool = False          # notch the fine-tunes' period-4 token grid out of the residual
     normalized_style: float | None = None
     local_tone_strength: float | None = None
     local_structure_strength: float | None = None
@@ -323,7 +324,8 @@ class TemporalSession:
                 output = self._blend_highpass_history(output, frame, motion, height, width)
         self.history = output; self.previous = frame; self.frame_index += 1
         return compose_detail(
-            frame, output, detail_strength=self.options.detail_strength, colour_strength=self.options.colour_strength, radius=self.options.detail_radius
+            frame, output, detail_strength=self.options.detail_strength, colour_strength=self.options.colour_strength, radius=self.options.detail_radius,
+            degrid_period=4 if self.options.degrid else 0
         )
 
     def _blend_highpass_history(self, output: np.ndarray, frame: np.ndarray, motion: np.ndarray, height: int, width: int) -> np.ndarray:

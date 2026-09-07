@@ -49,7 +49,7 @@ class ComfyNodeTests(unittest.TestCase):
         images = torch.from_numpy(np.random.default_rng(0).random((2, 16, 24, 3), dtype=np.float32))
         out, masks = n.MLXDLSSNeuralRendering().render(renderer, images, "standard", 2.0, 1.0, 0.5, 4.0, 1.0, "none", 0.0, 8.0, 7)
         self.assertEqual(tuple(out.shape), (2, 16, 24, 3)); self.assertEqual(tuple(masks.shape), (2, 16, 24))
-        direct = renderer.enhance(images[1].numpy(), processing_scale=2.0, colour_strength=0.5, frame_index=8).image
+        direct = renderer.enhance(images[1].numpy(), processing_scale=2.0, colour_strength=0.5, frame_index=8, degrid=True).image
         self.assertLess(float(np.abs(out[1].numpy() - direct).max()), 1e-6)
 
     def test_renderer_node_takes_an_explicit_skin_mask(self):
@@ -107,5 +107,5 @@ class ComfyNodeTests(unittest.TestCase):
             self.skipTest("opencv not installed")
         (renderer,) = n.MLXDLSSLoadRenderer().load(str(self.renderer_weights), "cpu", "reference")
         frames = torch.from_numpy(np.random.default_rng(4).random((3, 16, 24, 3), dtype=np.float32))
-        out, cuts = n.MLXDLSSVideoUpscale().upscale(renderer, frames, 1.5, "bicubic", 1.0, 1.0, 1.0, "none", 0.0, 8.0, 0, 0.5, 0.15)
+        out, cuts = n.MLXDLSSVideoUpscale().upscale(renderer, frames, 1.5, "bicubic", 1.0, 1.0, 1.0, "none", 0.0, 8.0, 0, True, 0.5, 0.15)
         self.assertEqual(tuple(out.shape), (3, 24, 36, 3)); self.assertIsInstance(cuts, int)

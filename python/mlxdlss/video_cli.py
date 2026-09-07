@@ -29,6 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--processing-scale", type=float, default=1.0)
     run.add_argument("--detail-strength", type=float, default=1.0); run.add_argument("--colour-strength", type=float, default=1.0)
     run.add_argument("--detail-radius", type=float, default=4.0); run.add_argument("--intensity", type=float, default=1.0)
+    run.add_argument("--no-degrid", action="store_true", help="keep the fine-tunes' period-4 token grid (default: notched out)")
     run.add_argument("--start-frame", type=int, default=0); run.add_argument("--frames", type=int, default=None, help="stop after this many frames")
     run.add_argument("--batch", type=int, default=1, help="frames per network call (GPU devices)")
     run.add_argument("--pix-fmt", default="rgb24", choices=tuple(PIXEL_FORMATS), help="frame exchange format; rgb48le keeps 16-bit sources")
@@ -115,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
             backend=args.backend, model_package=str(args.model) if args.model else None, mlxdlss=args.mlxdlss, execution=args.execution, precision=args.mlxdlss_precision,
             **({"blend_scale": args.blend_scale} if args.blend_scale is not None else {}),
             enhance={"profile": args.profile, "processing_scale": args.processing_scale, "detail_strength": args.detail_strength,
-                     "colour_strength": args.colour_strength, "detail_radius": args.detail_radius, "intensity": args.intensity},
+                     "colour_strength": args.colour_strength, "detail_radius": args.detail_radius, "intensity": args.intensity, "degrid": not args.no_degrid},
         )
         result = convert(args.input, args.output, pipeline, options, ffmpeg=args.ffmpeg, ffprobe=args.ffprobe)
         where = f"{pipeline.device}" if pipeline is not None else "mlxdlss metal"

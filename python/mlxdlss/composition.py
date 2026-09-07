@@ -78,6 +78,22 @@ def resample(image: np.ndarray, width: int, height: int) -> np.ndarray:
     return np.stack(planes, axis=-1)
 
 
+def degrid(change: np.ndarray, period: int = 4, width: float = 0.012) -> np.ndarray:
+    """Notch out the axis-aligned pattern of the given period from a residual.
+
+    The fine-tuned renderers imprint a period-4 token grid on flat skin (3-4% of the residual's energy; the
+    stock weights 0.1-0.2%). That pattern, content-modulated, lives on the spectral lines |kx| = 1/period and
+    |ky| = 1/period; real texture puts ~0.2% of its energy there, so a narrow smooth notch on those lines
+    removes the grid and nothing visible."""
+    h, w = change.shape
+    spectrum = np.fft.fft2(change.astype(np.float32))
+    ky = np.abs(np.fft.fftfreq(h))[:, None]
+    kx = np.abs(np.fft.fftfreq(w))[None, :]
+    f0 = 1.0 / period
+    keep = (1 - np.exp(-((ky - f0) / width) ** 2)) * (1 - np.exp(-((kx - f0) / width) ** 2))
+    return np.fft.ifft2(spectrum * keep).real.astype(np.float32)
+
+
 def compose_detail(
     source: np.ndarray,
     output: np.ndarray,
@@ -85,8 +101,10 @@ def compose_detail(
     detail_strength: float = 1.0,
     colour_strength: float = 1.0,
     radius: float = 4.0,
+    degrid_period: int = 0,
 ) -> np.ndarray:
-    """result = source + colour * lowpass(change) + detail * highpass(change), clamped to [0, 1]."""
+    """result = source + colour * lowpass(change) + detail * highpass(change), clamped to [0, 1].
+    ``degrid_period`` > 0 first removes the network's axis-aligned token-grid pattern from the change."""
     for value in (detail_strength, colour_strength, radius):
         if not math.isfinite(value):
             raise ValueError("strengths and radius must be finite")
@@ -96,12 +114,14 @@ def compose_detail(
     output = np.asarray(output, dtype=np.float32)
     if source.shape != output.shape:
         raise ValueError("source and output must share a shape")
-    if detail_strength == 1 and colour_strength == 1:
+    if detail_strength == 1 and colour_strength == 1 and not degrid_period:
         return output
     kernel = gaussian_kernel(radius)
     result = np.empty_like(source)
     for channel in range(source.shape[2]):
         change = output[..., channel] - source[..., channel]
+        if degrid_period:
+            change = degrid(change, degrid_period)
         low = blur(change, kernel)
         high = change - low
         result[..., channel] = np.clip(

@@ -48,3 +48,17 @@ class CompositionTests(unittest.TestCase):
     def test_lanczos_upscale_keeps_constant_images(self):
         image = np.full((4, 4, 3), 0.25, dtype=np.float32)
         np.testing.assert_allclose(resample(image, 8, 6), 0.25, atol=1e-6)
+
+
+class DegridTests(unittest.TestCase):
+    def test_notch_removes_a_period_4_grid_and_keeps_texture(self):
+        import numpy as np
+        from mlxdlss.composition import degrid
+
+        rng = np.random.default_rng(0)
+        texture = rng.normal(0, 1, (96, 128)).astype(np.float32)
+        y, x = np.mgrid[:96, :128]
+        grid = (0.5 * np.cos(2 * np.pi * x / 4) + 0.5 * np.cos(2 * np.pi * y / 4)).astype(np.float32)
+        cleaned = degrid(texture + grid, 4)
+        self.assertLess(float(np.abs(cleaned - texture).mean()), 0.15)          # grid gone, noise kept
+        self.assertLess(float(np.abs(degrid(texture, 4) - texture).mean()), 0.06)  # near no-op on plain texture
