@@ -506,3 +506,8 @@ pixel source on fidelity AND perceived quality with low halo; Lanczos second; bi
 (SPAN, ClearReality, ESRGAN) lose 10+ dB and triple the halo — they invent. The re-detail pass adds ~+3.5 MUSIQ
 on every clean source. Node default = Lanczos; Thera via ComfyUI-Thera before the renderer is the documented
 best path (its MLX port converts to noise); SPAN/ESRGAN not recommended as the input to re-detail.
+
+### final1 (2026-09-07, from v1-crisp, plan-C band+hinges over energy 2.0, DINO 1, lr 6e-6 cosine 6000, crop 256, dataset3, EMA 0.999, dense barrier)
+Held-out = 32 crops of dataset3 (harder: hp_target 4.72). crisp at step 0: PSNR 33.21 / hp 4.33 →
+step 2000 35.20 / 3.54 → 6000 **35.20 / 3.60**. +2.0 dB fidelity for 17% of crisp's high-pass; hp still
+well above v2-on-this-split. 0 skipped steps, activations 114-156 throughout, 2.98 s/step.
