@@ -34,3 +34,11 @@ original crop (PSNR); Lanczos resampling as the baseline.
 For enlarging realistic content an ordinary resampler is the better tool; the
 detail pass of the neural-rendering network is what adds anything. Super
 resolution is out of scope for this package.
+
+## Fork addendum (2026-09-07)
+
+The pack's Image/Video Upscale nodes are therefore a resampler (or a spandrel model of your choice)
+followed by the neural renderer's detail pass. Measured on twelve production clips at 1.5x
+(`scripts/upscale_bake.py`, truth = the original frame): Thera > Lanczos > bicubic on fidelity;
+SPAN / ClearReality / Real-ESRGAN lose 10+ dB and triple the edge halo. The renderer adds ~+3.5
+MUSIQ on any clean source.

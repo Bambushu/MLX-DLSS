@@ -190,7 +190,14 @@ from your own extraction (`scripts/fetch_datasets.py` pulls the datasets).
 ## ComfyUI
 
 `comfyui/ComfyUI-MLX-DLSS` wraps both networks as nodes (renderer with the skin auto-mask,
-frame generation with the scene-cut gate) and ships `example_workflows/`. See its README.
+frame generation with the scene-cut gate, Image/Video Upscale = resampler or any spandrel
+upscale model for the pixels + the renderer for the detail) and ships `example_workflows/`. See its README.
+
+Which pixels to feed the re-detail pass was measured on twelve production clips at 1.5x with the
+original frame as truth (`scripts/upscale_bake.py`, `ab/RESULTS.md`): Thera (arbitrary-scale,
+[ComfyUI-Thera](https://github.com/yuvraj108c/ComfyUI-Thera)) is the best source on fidelity and
+perceived quality, Lanczos second and the node default; learned 2x/4x nets (SPAN, ClearReality,
+Real-ESRGAN) lose 10+ dB to the truth and triple the halo, so they are the wrong input for it.
 
 ## Controls (neural rendering)
 
