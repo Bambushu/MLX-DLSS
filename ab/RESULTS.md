@@ -421,3 +421,13 @@ walk, grwm, night, car, smoothie) + bloomrest sleeping close-up (2026-09-06), po
 | Flickr2K | 2650 | 2463 |
 | DIV8K (≤3072 px) | 1500 | 1254 |
 | **total** | | **39554** (dataset2 was 6579) |
+
+### Chain C→D→E from v2 (2026-09-07 night, crop 256, dense FP8 barrier, held-out 32 crops)
+| run | loss | final PSNR | final hp | note |
+|---|---|---|---|---|
+| v2 (start) | — | 35.90 | 2.81 | |
+| run7 = C | band L1 + halo/mottle hinges over energy 2.0, 3000 steps | 35.87 | 2.79 | flat from step 500; a regulariser, not a detail gain |
+| run8 = D | + synthetic-flow temporal 1.0, 2500 steps | 35.77 | 2.50 | -11% hp for consistency; first attempt with the sparse barrier hit 500-867 peaks and was discarded |
+| run9 = E | + band-limited GAN 0.005 + FM, 2000 steps | 35.62 | 2.57 | the only term that moved hp UP (2.50→2.62 at step 500), oscillates |
+Verdict pending rank.py (MUSIQ/TOPIQ/LPIPS/DISTS on H3 frames + RealSR) and the blind A/B; hp
+energy alone says v2/crisp still lead on detail.
