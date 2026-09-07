@@ -252,7 +252,7 @@ def _masker(renderer, auto_mask: str, mask_feather: float):
 UPSCALE_INPUTS = {
     "scale_factor": ("FLOAT", {"default": 1.5, "min": 1.0, "max": 4.0, "step": 0.25, "tooltip": "1.5 = the sweet spot; pixels come from the resampler/model, detail from the renderer"}),
     "method": (["lanczos", "bicubic", "upscale_model"], {"default": "lanczos", "tooltip": "upscale_model: plug ComfyUI's Load Upscale Model (SPAN/ESRGAN...) into upscale_model"}),
-    "detail_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 8.0, "step": 0.1}),
+    "detail_strength": ("FLOAT", {"default": 2.0, "min": 0.0, "max": 8.0, "step": 0.1, "tooltip": "fine-tuned weights on soft AI video: 2 (1 is barely visible, 3 shows grain)"}),
     "colour_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 4.0, "step": 0.1, "tooltip": "fine-tuned weights: 1; stock weights: 0.5"}),
     "intensity": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.05}),
     "auto_mask": (["skin", "none"], {"default": "skin"}),

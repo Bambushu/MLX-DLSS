@@ -181,7 +181,7 @@ and a band-limited PatchGAN (`--w-lap`, `--w-temporal`, `--w-adv`).
 | `dlssnr-ft-real-v1` | conservative first run | reference |
 
 They drop into every `--weights` flag and into `mlxdlss-weights mlx` for the Metal package.
-Recipe for soft sources: processing scale 1, detail 1, colour 1, `--auto-mask skin`, and
+Recipe for soft sources: processing scale 1, **detail 2** (1 is a barely visible pass on production H3 output, 3 shows grain), colour 1, `--auto-mask skin`, and
 `--hp-history 0.5` on video (scale 2 makes the fine-tunes SOFTER, unlike stock). Keep the stock
 weights (scale 2, colour 0.5) for already-sharp stills. The weights are derived from the vendor's
 and are not in this repository. `scripts/finetune.py build|train|eval|calibrate` reproduces them
