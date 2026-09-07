@@ -511,3 +511,27 @@ best path (its MLX port converts to noise); SPAN/ESRGAN not recommended as the i
 Held-out = 32 crops of dataset3 (harder: hp_target 4.72). crisp at step 0: PSNR 33.21 / hp 4.33 →
 step 2000 35.20 / 3.54 → 6000 **35.20 / 3.60**. +2.0 dB fidelity for 17% of crisp's high-pass; hp still
 well above v2-on-this-split. 0 skipped steps, activations 114-156 throughout, 2.98 s/step.
+
+### rank.py — 31 stills, 31 RealSR pairs, fine-tune recipe
+
+| weights | musiq | clipiqa | topiq_nr | lpips | dists |
+|---|---|---|---|---|---|
+| input | 73.5028 | 0.5821 | 0.5592 | 0.1377 | 0.1065 |
+| dlssnr-ft-real-v1-crisp | 75.4634 | 0.6137 | 0.6059 | 0.1122 | 0.1025 |
+| dlssnr-ft-real-v2 | 74.7369 | 0.6083 | 0.5837 | 0.1115 | 0.0993 |
+| dlssnr-ft-latest | 74.3127 | 0.6021 | 0.5765 | 0.1032 | 0.0942 |
+| dlssnr-ft-step3000 | 74.4164 | 0.6009 | 0.5794 | 0.1077 | 0.0966 |
+| dlssnr-ft-ema-step4000 | 74.4470 | 0.6016 | 0.5783 | 0.1115 | 0.0971 |
+| dlssnr-ft-ema-step5000 | 74.4490 | 0.6018 | 0.5778 | 0.1095 | 0.0963 |
+| dlssnr-ft-step6000 | 74.4161 | 0.6014 | 0.5767 | 0.1074 | 0.0961 |
+| dlssnr-ft-ema-step6000 | 74.4472 | 0.6018 | 0.5776 | 0.1086 | 0.0963 |
+
+### Blind A/B, vision-model grader (2026-09-07 20:00, ab/blind1, mid-frame crops, texture-only rubric, key hidden)
+| | wins | games | rate |
+|---|---|---|---|
+| v2 | 17 | 24 | 0.71 |
+| crisp | 12 | 24 | 0.50 |
+| final1 EMA | 7 | 24 | 0.29 |
+Pairings: v2 beats crisp 7-3, crisp beats final 7-3, v2 beats final 8-2 (2 ties each, all dark/flat
+scenes). Grader's pattern: "one model preserves fine skin texture, the other smooths/waxes it";
+no halos or crunch seen on any side. Single-frame judgment (no motion/flicker). Mike's verdicts pending.
