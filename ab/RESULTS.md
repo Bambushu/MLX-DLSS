@@ -466,3 +466,43 @@ Final-run lr = 6e-6 unless rank.py disagrees.
 | sw late | 74.5555 | 0.6047 | 0.5818 | 0.1056 | 0.0960 |
 
 Reading: perceived quality favours crisp/v1 (MUSIQ 75.4, TOPIQ 0.60); fidelity favours the plan-C family (run9 DISTS 0.094, lr1e5-EMA LPIPS 0.102). v2 is the worst fine-tune on LPIPS. The two families trade sharpness against faithfulness; the blind A/B decides, the final run merges them (from crisp, plan-C hinges, lr 6e-6, dataset3, EMA).
+
+### rank.py — 31 stills, 31 RealSR pairs, fine-tune recipe
+
+| weights | musiq | clipiqa | topiq_nr | lpips | dists |
+|---|---|---|---|---|---|
+| input | 73.5028 | 0.5821 | 0.5592 | 0.1377 | 0.1065 |
+| v2_crisp | 75.0683 | 0.6071 | 0.5935 | 0.1091 | 0.0999 |
+| v2_lr6e6 | 74.6181 | 0.6062 | 0.5816 | 0.1074 | 0.0966 |
+| lr6e6_run9 | 74.4409 | 0.6032 | 0.5782 | 0.1028 | 0.0937 |
+| v2_crisp_lr6e6 | 74.9027 | 0.6074 | 0.5887 | 0.1058 | 0.0975 |
+
+### upscale bake x1.5, 12 clips x 3 frames, re-detail = dlssnr-ft-real-v2
+
+| method | psnr | lpips | dists | musiq | topiq_nr | halo |
+|---|---|---|---|---|---|---|
+| bicubic | 47.257 | 0.013 | 0.016 | 60.395 | 0.401 | 0.428 |
+| bicubic+nr | 42.499 | 0.026 | 0.021 | 64.440 | 0.428 | 1.371 |
+| lanczos | 47.891 | 0.010 | 0.013 | 61.677 | 0.408 | 0.479 |
+| lanczos+nr | 42.483 | 0.027 | 0.021 | 65.092 | 0.432 | 1.484 |
+| 2xNomosUni_span_multijpg | 34.676 | 0.029 | 0.025 | 64.264 | 0.445 | 0.648 |
+| 2xNomosUni_span_multijpg+nr | 34.382 | 0.046 | 0.040 | 66.498 | 0.477 | 1.449 |
+| 4x-ClearRealityV1 | 38.223 | 0.058 | 0.046 | 69.683 | 0.563 | 1.720 |
+| 4x-ClearRealityV1+nr | 37.367 | 0.068 | 0.052 | 70.570 | 0.582 | 2.252 |
+| 4x-ClearRealityV1_Soft | 36.440 | 0.071 | 0.057 | 70.324 | 0.578 | 1.991 |
+| 4x-ClearRealityV1_Soft+nr | 35.905 | 0.080 | 0.062 | 70.976 | 0.592 | 2.445 |
+| RealESRGAN_x2plus | 37.580 | 0.066 | 0.045 | 68.152 | 0.512 | 1.792 |
+| RealESRGAN_x2plus+nr | 36.880 | 0.072 | 0.050 | 68.872 | 0.524 | 2.152 |
+| efrlfn_x2 | 45.048 | 0.019 | 0.021 | 59.419 | 0.392 | 0.410 |
+| efrlfn_x2+nr | 42.353 | 0.029 | 0.022 | 63.677 | 0.417 | 1.221 |
+| efrlfn_x4 | 42.295 | 0.021 | 0.024 | 59.487 | 0.390 | 0.374 |
+| efrlfn_x4+nr | 40.462 | 0.028 | 0.023 | 63.752 | 0.417 | 1.191 |
+| thera_air | 47.137 | 0.008 | 0.010 | 64.716 | 0.448 | 0.663 |
+| thera_air+nr | 41.994 | 0.029 | 0.022 | 66.993 | 0.474 | 1.670 |
+| thera_pro | 47.077 | 0.009 | 0.010 | 64.797 | 0.447 | 0.675 |
+| thera_pro+nr | 41.970 | 0.030 | 0.023 | 67.048 | 0.472 | 1.677 |
+Reading (bake, 12 clips x 3 frames, 1.5x, truth = the original frame): Thera (arbitrary-scale, JAX) is the best
+pixel source on fidelity AND perceived quality with low halo; Lanczos second; bicubic third. Learned 2x/4x nets
+(SPAN, ClearReality, ESRGAN) lose 10+ dB and triple the halo — they invent. The re-detail pass adds ~+3.5 MUSIQ
+on every clean source. Node default = Lanczos; Thera via ComfyUI-Thera before the renderer is the documented
+best path (its MLX port converts to noise); SPAN/ESRGAN not recommended as the input to re-detail.
