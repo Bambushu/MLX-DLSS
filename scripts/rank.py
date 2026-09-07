@@ -31,7 +31,7 @@ def load(path: Path, max_side: int) -> np.ndarray:
 
 
 def to_t(img: np.ndarray, device: str) -> torch.Tensor:
-    return torch.from_numpy(img).permute(2, 0, 1)[None].to(device)
+    return torch.from_numpy(np.ascontiguousarray(img)).permute(2, 0, 1)[None].to(device)
 
 
 def list_stills(spec: Path, n: int) -> list[Path]:
@@ -47,11 +47,11 @@ def main() -> int:
     p.add_argument("--weights", nargs="+", type=Path, required=True); p.add_argument("--stills", type=Path, required=True)
     p.add_argument("--n", type=int, default=24); p.add_argument("--max-side", type=int, default=1024)
     p.add_argument("--realsr", type=Path, default=None, help="RealSR V3 root: pairs Canon/Nikon */LR2/*.png vs HR")
-    p.add_argument("--device", default="mps"); p.add_argument("--stock", action="store_true"); p.add_argument("--out", type=Path, default=None)
+    p.add_argument("--device", default="mps"); p.add_argument("--metric-device", default="cpu", help="pyiqa device (MPS lacks non-divisible adaptive pooling)"); p.add_argument("--stock", action="store_true"); p.add_argument("--out", type=Path, default=None)
     a = p.parse_args()
     import pyiqa
-    nr = {name: pyiqa.create_metric(name, device=a.device) for name in ("musiq", "clipiqa", "topiq_nr")}
-    fr = {name: pyiqa.create_metric(name, device=a.device) for name in ("lpips", "dists")} if a.realsr else {}
+    nr = {name: pyiqa.create_metric(name, device=a.metric_device) for name in ("musiq", "clipiqa", "topiq_nr")}
+    fr = {name: pyiqa.create_metric(name, device=a.metric_device) for name in ("lpips", "dists")} if a.realsr else {}
     recipe = dict(processing_scale=2, detail_strength=1.0, colour_strength=0.5) if a.stock else dict(processing_scale=1, detail_strength=1.0, colour_strength=1.0)
     masker = None if a.stock else SkinMasker(device=a.device)
     stills = list_stills(a.stills, a.n)
@@ -65,14 +65,14 @@ def main() -> int:
         vals = {k: [] for k in list(nr) + list(fr)}
         for s in stills:
             img = load(s, a.max_side); out = render(img) if render else img
-            t = to_t(out, a.device)
+            t = to_t(out, a.metric_device)
             with torch.no_grad():
                 for k, m in nr.items(): vals[k].append(float(m(t)))
         for lr, hr in pairs:
             img = load(lr, a.max_side); out = render(img) if render else img
             hr_img = Image.open(hr).convert("RGB").resize((out.shape[1], out.shape[0]), Image.LANCZOS)
             with torch.no_grad():
-                for k, m in fr.items(): vals[k].append(float(m(to_t(out, a.device), to_t(np.asarray(hr_img).astype(np.float32) / 255.0, a.device))))
+                for k, m in fr.items(): vals[k].append(float(m(to_t(out, a.metric_device), to_t(np.asarray(hr_img).astype(np.float32) / 255.0, a.metric_device))))
         rows.append((name, {k: float(np.mean(v)) for k, v in vals.items() if v}))
         print(name, json.dumps({k: round(v, 4) for k, v in rows[-1][1].items()}), flush=True)
     score("input", None)

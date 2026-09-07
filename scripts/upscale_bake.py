@@ -63,12 +63,12 @@ def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--clips", nargs="+", required=True); p.add_argument("--weights", required=True)
     p.add_argument("--scale", type=float, default=1.5); p.add_argument("--frames", type=int, default=3)
-    p.add_argument("--models-dir", default=str(Path.home() / "ComfyUI-h3/models/upscale_models")); p.add_argument("--device", default="mps")
+    p.add_argument("--models-dir", default=str(Path.home() / "ComfyUI-h3/models/upscale_models")); p.add_argument("--device", default="mps"); p.add_argument("--metric-device", default="cpu", help="pyiqa device (MPS lacks non-divisible adaptive pooling)")
     p.add_argument("--out", type=Path, default=None)
     a = p.parse_args()
     import pyiqa, spandrel
-    fr = {n: pyiqa.create_metric(n, device=a.device) for n in ("lpips", "dists")}
-    nr = {n: pyiqa.create_metric(n, device=a.device) for n in ("musiq", "topiq_nr")}
+    fr = {n: pyiqa.create_metric(n, device=a.metric_device) for n in ("lpips", "dists")}
+    nr = {n: pyiqa.create_metric(n, device=a.metric_device) for n in ("musiq", "topiq_nr")}
     models = {Path(f).stem: spandrel.ModelLoader().load_from_file(f).eval().to(a.device) for f in sorted(glob.glob(a.models_dir + "/*.safetensors") + glob.glob(a.models_dir + "/*.pth")) if "EfRLFN" not in f}
     efr = Path.home() / "mlx-upscalers/EfRLFN"                                      # ICLR 2026 EfRLFN, torch class + weights converted from the MLX port
     if efr.exists():
@@ -96,7 +96,7 @@ def main() -> int:
         model, params = thera_models[variant]
         return np.asarray(thera_process(img.astype(np.float32) / 255, model, params, (size[1], size[0]), 256, False)).astype(np.uint8)
     pipe = NeuralRenderingPipeline.from_safetensors(a.weights, device=a.device, precision="fast"); masker = SkinMasker(device=a.device)
-    to_t = lambda x: torch.from_numpy(x).permute(2, 0, 1)[None].float().div(255).to(a.device)
+    to_t = lambda x: torch.from_numpy(np.ascontiguousarray(x)).permute(2, 0, 1)[None].float().div(255).to(a.metric_device)
     scores: dict[str, dict[str, list[float]]] = {}
     def record(name, out, ref):
         s = scores.setdefault(name, {})
