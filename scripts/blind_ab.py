@@ -31,7 +31,7 @@ def render(a) -> int:
             if target.exists():
                 continue
             sh(sys.executable, "-m", "mlxdlss.video_cli", "convert", clip, str(target), "--weights", path, "--device", a.device, "--precision", "fast",
-               "--processing-scale", "1", "--detail-strength", "1", "--colour-strength", "1", "--auto-mask", "skin", "--temporal", "--hp-history", "0.5", "--batch", "1")
+               "--processing-scale", "1", "--detail-strength", str(a.detail), "--colour-strength", "1", "--auto-mask", "skin", "--temporal", "--hp-history", "0.5", "--batch", "1")
             print("rendered", target.name, flush=True)
     (out / "weights.json").write_text(json.dumps(weights, indent=1))
     return 0
@@ -112,7 +112,7 @@ def strips(a) -> int:
 
 def main() -> int:
     p = argparse.ArgumentParser(); sub = p.add_subparsers(dest="cmd", required=True)
-    r = sub.add_parser("render"); r.add_argument("out"); r.add_argument("--clips", nargs="+", required=True); r.add_argument("--weights", nargs="+", required=True); r.add_argument("--device", default="mps")
+    r = sub.add_parser("render"); r.add_argument("out"); r.add_argument("--clips", nargs="+", required=True); r.add_argument("--weights", nargs="+", required=True); r.add_argument("--device", default="mps"); r.add_argument("--detail", type=float, default=2.0, help="detail strength for the renders (2 = production strength for the fine-tunes on soft H3)")
     q = sub.add_parser("pair"); q.add_argument("out"); q.add_argument("--seed", type=int, default=1)
     q.add_argument("--crop", type=int, default=0, help="side of a square crop centred on the face (skin mask of the middle frame); 0 = full frame")
     q.add_argument("--zoom", type=int, default=2, help="nearest-neighbour zoom of the crop")
