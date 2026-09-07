@@ -431,3 +431,12 @@ walk, grwm, night, car, smoothie) + bloomrest sleeping close-up (2026-09-06), po
 | run9 = E | + band-limited GAN 0.005 + FM, 2000 steps | 35.62 | 2.57 | the only term that moved hp UP (2.50→2.62 at step 500), oscillates |
 Verdict pending rank.py (MUSIQ/TOPIQ/LPIPS/DISTS on H3 frames + RealSR) and the blind A/B; hp
 energy alone says v2/crisp still lead on detail.
+
+### Hyper-parameter sweep (2026-09-07 morning, 800 steps from v2, plan-C loss + dense barrier, EMA 0.999 warm-up)
+| run | PSNR | hp | |
+|---|---|---|---|
+| control lr 3e-6 | 36.03 | 2.78 | |
+| **lr 6e-6** | **36.10** | **2.83** | best on both axes |
+| lr 1e-5 | 36.08 | 2.81 | |
+| late blocks only (35-70), 3e-6 | 36.01 | 2.76 | worst; the panel's "within noise" was right |
+Final-run lr = 6e-6 unless rank.py disagrees.
