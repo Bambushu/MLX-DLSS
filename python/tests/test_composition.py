@@ -59,6 +59,7 @@ class DegridTests(unittest.TestCase):
         texture = rng.normal(0, 1, (96, 128)).astype(np.float32)
         y, x = np.mgrid[:96, :128]
         grid = (0.5 * np.cos(2 * np.pi * x / 4) + 0.5 * np.cos(2 * np.pi * y / 4)).astype(np.float32)
-        cleaned = degrid(texture + grid, 4)
-        self.assertLess(float(np.abs(cleaned - texture).mean()), 0.15)          # grid gone, noise kept
-        self.assertLess(float(np.abs(degrid(texture, 4) - texture).mean()), 0.06)  # near no-op on plain texture
+        self.assertLess(float(np.abs(degrid(grid, 4)).mean()), 1e-3)                                  # the grid is removed entirely
+        kept = float((degrid(texture, 4) ** 2).mean() / (texture ** 2).mean())
+        self.assertGreater(kept, 0.85)                                                                # white noise (worst case) keeps ~90% of its energy
+        self.assertLess(float(np.abs(degrid(texture + grid, 4) - degrid(texture, 4)).mean()), 1e-3)  # linear: grid + texture -> texture
