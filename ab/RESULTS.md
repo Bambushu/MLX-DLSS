@@ -440,3 +440,9 @@ energy alone says v2/crisp still lead on detail.
 | lr 1e-5 | 36.08 | 2.81 | |
 | late blocks only (35-70), 3e-6 | 36.01 | 2.76 | worst; the panel's "within noise" was right |
 Final-run lr = 6e-6 unless rank.py disagrees.
+
+### Audits before the final run (2026-09-07 08:28)
+- (a) fp16 save vs live model: saved lr6e6 step-800 evaluates PSNR 36.12 / hp 2.84 vs logged 36.10 / 2.83 — nothing lost at save.
+- (b) Metal package vs torch, H3 frame, no mask: torch↔Metal 51.1 dB (stock), 47.9 dB (v2); fine-tune effect vs stock 30.9 dB on BOTH paths — the .dlssmodel keeps the fine-tune through FP8 packing.
+- (c) frozen 141/649 tensors = attn_scale 70, attn_bias 62, attention_scalar 8, blend_scale 1: recovered constants with no gradient path; nothing trainable is excluded.
+- pyiqa metrics must run on CPU (MPS lacks non-divisible adaptive pooling); rendering stays on MPS.
