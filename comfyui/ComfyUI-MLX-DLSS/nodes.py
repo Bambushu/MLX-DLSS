@@ -18,12 +18,10 @@ _cache: dict[tuple, object] = {}
 
 
 def _path(text: str) -> Path:
-    path = Path(text).expanduser()
-    if not path.is_absolute():
-        path = Path(DEFAULT_WEIGHTS) / path
-    if not path.exists():
-        raise FileNotFoundError(f"weights not found: {path}")
-    return path
+    # same resolution as the CLIs: explicit path, MLXDLSS_WEIGHTS / weights dir, then MLXDLSS_HF_REPO
+    from mlxdlss.weights import resolve_weights
+
+    return resolve_weights(text)
 
 
 def _to_uint8(image: torch.Tensor) -> np.ndarray:
@@ -31,12 +29,14 @@ def _to_uint8(image: torch.Tensor) -> np.ndarray:
 
 
 def _progress_bar(total: int):
-    """ComfyUI per-frame progress bar; None when comfy isn't importable (e.g. unit tests)."""
+    """ComfyUI per-frame progress bar; None when comfy isn't importable (e.g. unit tests) or empty."""
+    if total <= 0:
+        return None
     try:
         from comfy.utils import ProgressBar
 
         return ProgressBar(total)
-    except Exception:
+    except (ImportError, AttributeError):
         return None
 
 
@@ -266,7 +266,7 @@ def _masker(renderer, auto_mask: str, mask_feather: float):
 UPSCALE_INPUTS = {
     "scale_factor": ("FLOAT", {"default": 2.0, "min": 1.0, "max": 4.0, "step": 0.25, "tooltip": "2 = most visible re-detail (default); 1.5 is faster with less base softening. Pixels come from the resampler/model, detail from the renderer"}),
     "method": (["lanczos", "bicubic", "upscale_model"], {"default": "lanczos", "tooltip": "upscale_model: plug ComfyUI's Load Upscale Model (SPAN/ESRGAN...) into upscale_model"}),
-    "detail_strength": ("FLOAT", {"default": 2.0, "min": 0.0, "max": 8.0, "step": 0.1, "tooltip": "detail-enhancement pass on soft/upscaled video — synthesizes plausible texture (measured ~30% aligned with true detail, not reconstruction): 1 = subtle, 2 = visible crispness (default), 3 = grain"}),
+    "detail_strength": ("FLOAT", {"default": 2.0, "min": 0.0, "max": 8.0, "step": 0.1, "tooltip": "detail-enhancement pass on soft/upscaled video: adds mostly-synthesised fine texture (only ~30% aligns with the true lost detail, measured — see ab/RESULTS.md), so enhancement, not reconstruction. Does not invent objects or change the subject. 1 = subtle, 2 = visible crispness (default), 3 = grain"}),
     "colour_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 4.0, "step": 0.1, "tooltip": "fine-tuned weights: 1; stock weights: 0.5"}),
     "intensity": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.05}),
     "auto_mask": (["skin", "none"], {"default": "skin"}),

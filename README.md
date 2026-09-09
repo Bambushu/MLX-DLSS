@@ -32,11 +32,12 @@ deliberately left out: without engine motion vectors it loses to plain Lanczos.
 ## This fork (Bambushu/MLX-DLSS)
 
 > [!NOTE]
-> **This is not magic.** DLSSDetailer is a minor detailer and upscaler. It does not hallucinate or invent
-> features and it does not change the subject — it adds a small, measured amount of crispness and fine
-> texture. That texture is *synthesised* (a plausible enhancement), not reconstructed from the original, so
-> use it as a light finishing pass, not a super-resolution miracle. The gain is real but modest; it does the
-> most on soft, upscaled footage (see `ab/RESULTS.md`).
+> **This is not magic.** DLSSDetailer is a minor detailer and upscaler. It does not invent objects or scene
+> content and it does not change the subject — it adds a small, measured amount of crispness. The fine
+> texture is *mostly synthesised*: measured against ground truth, only ~30% of what it adds aligns with the
+> true lost detail (see `ab/RESULTS.md`), so treat it as enhancement, not reconstruction. Use it as a light
+> finishing pass, not a super-resolution miracle. The gain is real but modest; it does the most on soft,
+> upscaled footage.
 
 Everything upstream, plus what was needed to use the two networks on real and AI footage:
 
@@ -104,7 +105,7 @@ mlxdlss-video convert in.mp4 out.mp4 --scale 1.5 --detail-strength 2 --temporal 
 mlxdlss-torch run --input in.png --output out.png --detail-strength 2             # a still, same defaults
 ```
 
-The fine-tuned re-detail here is **DLSSDetailer** — a detail-enhancement pass on top of the recovered renderer (weights: `bambushu/dlssdetailer`, set `MLXDLSS_HF_REPO=bambushu/dlssdetailer` for auto-fetch once public). `--scale` upscales (Lanczos) before the re-detail pass; the re-detail is a detail-enhancement pass that synthesizes plausible texture (it does not reconstruct original detail),  so 1 is subtle, 2 is the visible default, 3 grains.
+The fine-tuned re-detail here is **DLSSDetailer** — a detail-enhancement pass on top of the recovered renderer. **The DLSSDetailer fine-tune weights are not yet publicly distributed** (`dlssnr-ft-real-v2.safetensors` etc.); train your own with `scripts/finetune.py`, or once they are published, set `MLXDLSS_HF_REPO=<repo>` and they auto-fetch. `--scale` upscales (Lanczos) before the re-detail pass; the re-detail synthesises mostly-new texture (only ~30% aligns with the true detail — enhancement, not reconstruction), so 1 is subtle, 2 is the visible default, 3 grains.
 
 **Memory.** The model is light: measured peak RAM is ~1.3 GB at 0.6 MP, ~1.9 GB at 2.5 MP, ~2.4 GB at a 4 MP frame (Apple Silicon shares this with the GPU; a discrete card uses ~1-2 GB VRAM). The **CLI streams frames**, so it holds one frame at a time and runs any clip length in ~2-4 GB. The **ComfyUI node buffers the whole sequence** (ComfyUI's batch model), so its RAM is frames x frame size — a long or high-res clip can need 10+ GB there. On a RAM-limited machine, use `mlxdlss-video convert` for long clips.
 

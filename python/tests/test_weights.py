@@ -48,5 +48,6 @@ def test_explicit_path_with_dirs_missing_raises_not_basename(tmp_path, monkeypat
 def test_directory_is_not_accepted(tmp_path, monkeypatch):
     monkeypatch.setenv("MLXDLSS_WEIGHTS", str(tmp_path))
     (tmp_path / "zzz_unique_test.safetensors").mkdir()  # a dir with the weights name (unique so real dirs can't supply it)
-    with pytest.raises(FileNotFoundError):
-        resolve_weights(name="zzz_unique_test.safetensors")
+    with pytest.raises(FileNotFoundError) as exc:
+        resolve_weights(str(tmp_path / "zzz_unique_test.safetensors"))
+    assert "not a directory" in str(exc.value)

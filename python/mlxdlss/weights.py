@@ -44,6 +44,8 @@ def resolve_weights(explicit: str | os.PathLike | None = None, name: str = DEFAU
         p = Path(str(explicit)).expanduser()
         if p.is_file():
             return p.resolve()
+        if p.is_dir():
+            raise FileNotFoundError(f"expected a weights file, not a directory: {p}")
         if p.is_absolute() or p.parent != Path("."):
             raise FileNotFoundError(f"weights path does not exist: {p}")
         name = p.name  # bare filename -> resolve against the search dirs / hub below
