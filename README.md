@@ -31,6 +31,13 @@ deliberately left out: without engine motion vectors it loses to plain Lanczos.
 
 ## This fork (Bambushu/MLX-DLSS)
 
+> [!NOTE]
+> **This is not magic.** DLSSDetailer is a minor detailer and upscaler. It does not hallucinate or invent
+> features and it does not change the subject — it adds a small, measured amount of crispness and fine
+> texture. That texture is *synthesised* (a plausible enhancement), not reconstructed from the original, so
+> use it as a light finishing pass, not a super-resolution miracle. The gain is real but modest; it does the
+> most on soft, upscaled footage (see `ab/RESULTS.md`).
+
 Everything upstream, plus what was needed to use the two networks on real and AI footage:
 
 - **Fine-tuned renderer weights** (`scripts/finetune.py`): the recovered graph trains as-is; the
