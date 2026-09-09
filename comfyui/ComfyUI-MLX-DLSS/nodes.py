@@ -30,6 +30,16 @@ def _to_uint8(image: torch.Tensor) -> np.ndarray:
     return (image.detach().float().clamp(0, 1).cpu().numpy() * 255.0 + 0.5).astype(np.uint8)
 
 
+def _progress_bar(total: int):
+    """ComfyUI per-frame progress bar; None when comfy isn't importable (e.g. unit tests)."""
+    try:
+        from comfy.utils import ProgressBar
+
+        return ProgressBar(total)
+    except Exception:
+        return None
+
+
 class MLXDLSSLoadRenderer:
     @classmethod
     def INPUT_TYPES(cls):
@@ -87,6 +97,7 @@ class MLXDLSSNeuralRendering:
                 _cache[key] = SkinMasker(device=renderer.device, feather_sigma=float(mask_feather))
             masker = _cache[key]
         outputs, masks = [], []
+        pbar = _progress_bar(image.shape[0])
         for index in range(image.shape[0]):
             frame = image[index].detach().float().clamp(0, 1).cpu().numpy()
             if skin_mask is not None:
@@ -104,6 +115,8 @@ class MLXDLSSNeuralRendering:
             )
             outputs.append(torch.from_numpy(np.clip(result.image, 0, 1).astype(np.float32)))
             masks.append(torch.from_numpy((mask if mask is not None else np.zeros(frame.shape[:2], dtype=np.float32)).astype(np.float32)))
+            if pbar is not None:
+                pbar.update(1)
         return (torch.stack(outputs), torch.stack(masks))
 
 
@@ -251,9 +264,9 @@ def _masker(renderer, auto_mask: str, mask_feather: float):
 
 
 UPSCALE_INPUTS = {
-    "scale_factor": ("FLOAT", {"default": 1.5, "min": 1.0, "max": 4.0, "step": 0.25, "tooltip": "1.5 = the sweet spot; pixels come from the resampler/model, detail from the renderer"}),
+    "scale_factor": ("FLOAT", {"default": 2.0, "min": 1.0, "max": 4.0, "step": 0.25, "tooltip": "2 = most visible re-detail (default); 1.5 is faster with less base softening. Pixels come from the resampler/model, detail from the renderer"}),
     "method": (["lanczos", "bicubic", "upscale_model"], {"default": "lanczos", "tooltip": "upscale_model: plug ComfyUI's Load Upscale Model (SPAN/ESRGAN...) into upscale_model"}),
-    "detail_strength": ("FLOAT", {"default": 2.0, "min": 0.0, "max": 8.0, "step": 0.1, "tooltip": "fine-tuned weights on soft AI video: 2 (1 is barely visible, 3 shows grain)"}),
+    "detail_strength": ("FLOAT", {"default": 2.0, "min": 0.0, "max": 8.0, "step": 0.1, "tooltip": "detail-enhancement pass on soft/upscaled video — synthesizes plausible texture (measured ~30% aligned with true detail, not reconstruction): 1 = subtle, 2 = visible crispness (default), 3 = grain"}),
     "colour_strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 4.0, "step": 0.1, "tooltip": "fine-tuned weights: 1; stock weights: 0.5"}),
     "intensity": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.05}),
     "auto_mask": (["skin", "none"], {"default": "skin"}),
@@ -282,12 +295,15 @@ class MLXDLSSImageUpscale:
         masker = _masker(renderer, auto_mask, mask_feather)
         size = (round(image.shape[2] * float(scale_factor)), round(image.shape[1] * float(scale_factor)))
         outputs = []
+        pbar = _progress_bar(image.shape[0])
         for index in range(image.shape[0]):
             frame = _upscale(image[index].detach().float().clamp(0, 1).cpu().numpy(), size, method, upscale_model, renderer.device)
             mask = masker.mask(frame, floor=float(mask_floor)) if masker is not None else None
             result = renderer.enhance(frame, profile="standard", processing_scale=1.0, detail_strength=float(detail_strength), colour_strength=float(colour_strength),
                                       intensity=float(intensity), frame_index=int(noise_frame_index) + index, skin_mask=mask, degrid=bool(degrid))
             outputs.append(torch.from_numpy(np.clip(result.image, 0, 1).astype(np.float32)))
+            if pbar is not None:
+                pbar.update(1)
         return (torch.stack(outputs),)
 
 
@@ -317,10 +333,13 @@ class MLXDLSSVideoUpscale:
             profile="standard", detail_strength=float(detail_strength), colour_strength=float(colour_strength), intensity=float(intensity),
             scene_cut_threshold=float(scene_cut) if scene_cut > 0 else 2.0, hp_history=float(hp_history), degrid=bool(degrid)))
         outputs = []
+        pbar = _progress_bar(image.shape[0])
         for index in range(image.shape[0]):
             frame = _upscale(image[index].detach().float().clamp(0, 1).cpu().numpy(), size, method, upscale_model, renderer.device)
             mask = masker.mask(frame, floor=float(mask_floor)) if masker is not None else None
             outputs.append(torch.from_numpy(np.clip(session.process(frame, skin_mask=mask), 0, 1).astype(np.float32)))
+            if pbar is not None:
+                pbar.update(1)
         return (torch.stack(outputs), int(session.scene_cuts))
 
 
@@ -337,8 +356,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MLXDLSSLoadRenderer": "MLX-DLSS Load Neural Renderer",
     "MLXDLSSNeuralRendering": "MLX-DLSS Neural Rendering (detail + tone)",
     "MLXDLSSNeuralRenderingMetal": "MLX-DLSS Neural Rendering VIDEO (Metal, temporal)",
-    "MLXDLSSImageUpscale": "MLX-DLSS Image Upscale (resample + neural re-detail)",
-    "MLXDLSSVideoUpscale": "MLX-DLSS Video Upscale (resample + neural re-detail, temporal)",
+    "MLXDLSSImageUpscale": "DLSSDetailer — Image Upscale (resample + re-detail)",
+    "MLXDLSSVideoUpscale": "DLSSDetailer — Video Upscale (resample + re-detail, temporal)",
     "MLXDLSSLoadFrameGen": "MLX-DLSS Load Frame Generator",
     "MLXDLSSFrameGeneration": "MLX-DLSS Frame Generation (interpolate)",
 }

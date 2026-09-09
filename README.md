@@ -90,6 +90,17 @@ extent.
 
 ## Commands
 
+Quickstart (weights auto-resolve from `MLXDLSS_WEIGHTS` / the `weights/` dir / `MLXDLSS_HF_REPO`, so `--weights` is optional):
+
+```sh
+mlxdlss-video convert in.mp4 out.mp4 --scale 1.5 --detail-strength 2 --temporal   # upscale 1.5x then re-detail, one line
+mlxdlss-torch run --input in.png --output out.png --detail-strength 2             # a still, same defaults
+```
+
+The fine-tuned re-detail here is **DLSSDetailer** — a detail-enhancement pass on top of the recovered renderer (weights: `bambushu/dlssdetailer`, set `MLXDLSS_HF_REPO=bambushu/dlssdetailer` for auto-fetch once public). `--scale` upscales (Lanczos) before the re-detail pass; the re-detail is a detail-enhancement pass that synthesizes plausible texture (it does not reconstruct original detail),  so 1 is subtle, 2 is the visible default, 3 grains.
+
+**Memory.** The model is light: measured peak RAM is ~1.3 GB at 0.6 MP, ~1.9 GB at 2.5 MP, ~2.4 GB at a 4 MP frame (Apple Silicon shares this with the GPU; a discrete card uses ~1-2 GB VRAM). The **CLI streams frames**, so it holds one frame at a time and runs any clip length in ~2-4 GB. The **ComfyUI node buffers the whole sequence** (ComfyUI's batch model), so its RAM is frames x frame size — a long or high-res clip can need 10+ GB there. On a RAM-limited machine, use `mlxdlss-video convert` for long clips.
+
 Still images:
 
 ```sh
@@ -181,7 +192,7 @@ and a band-limited PatchGAN (`--w-lap`, `--w-temporal`, `--w-adv`).
 | `dlssnr-ft-real-v1` | conservative first run | reference |
 
 They drop into every `--weights` flag and into `mlxdlss-weights mlx` for the Metal package.
-Recipe for soft sources: processing scale 1, **detail 2** (1 is a barely visible pass on production H3 output, 3 shows grain), colour 1, `--auto-mask skin`, and
+Recipe for soft sources: processing scale 1, **detail 2** (visible crispness; drop to 1 for fidelity-safe recovery with no invention, verified vs ground truth; 3 shows grain), colour 1, `--auto-mask skin`, and
 `--hp-history 0.5` on video (scale 2 makes the fine-tunes SOFTER, unlike stock). Keep the stock
 weights (scale 2, colour 0.5) for already-sharp stills. The weights are derived from the vendor's
 and are not in this repository. `scripts/finetune.py build|train|eval|calibrate` reproduces them

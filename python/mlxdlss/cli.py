@@ -40,7 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="mlxdlss-torch", description="PyTorch inference for the recovered neural-rendering transformer")
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser("run", help="enhance one image")
-    run.add_argument("--weights", required=True, type=pathlib.Path, help="logical safetensors (from mlxdlss-weights)")
+    run.add_argument("--weights", type=pathlib.Path, default=None, help="logical safetensors (from mlxdlss-weights); omit to auto-resolve (MLXDLSS_WEIGHTS / weights dir / MLXDLSS_HF_REPO)")
     run.add_argument("--input", required=True, type=pathlib.Path, help="PNG/JPEG, or raw .f32 RGB with --width/--height")
     run.add_argument("--output", required=True, type=pathlib.Path, help="PNG/JPEG or raw .f32 (must not exist)")
     run.add_argument("--width", type=int); run.add_argument("--height", type=int)
@@ -67,6 +67,9 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.output.exists():
         raise SystemExit(f"destination exists: {args.output}")
+    from .weights import resolve_weights
+
+    weights = resolve_weights(args.weights)  # fail on missing weights before the decode/mask work
     image = read_image(args.input, args.width, args.height)
     control_mask = None
     if args.control_mask is not None:
@@ -81,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.save_mask is not None:
             write_image(args.save_mask, np.repeat(skin_mask[..., None], 3, axis=2))
     started = time.perf_counter()
-    pipeline = NeuralRenderingPipeline.from_safetensors(args.weights, device=args.device, precision=args.precision)
+    pipeline = NeuralRenderingPipeline.from_safetensors(weights, device=args.device, precision=args.precision)
     load_seconds = time.perf_counter() - started
     result = pipeline.enhance(
         image,

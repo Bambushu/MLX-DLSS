@@ -535,3 +535,105 @@ well above v2-on-this-split. 0 skipped steps, activations 114-156 throughout, 2.
 Pairings: v2 beats crisp 7-3, crisp beats final 7-3, v2 beats final 8-2 (2 ties each, all dark/flat
 scenes). Grader's pattern: "one model preserves fine skin texture, the other smooths/waxes it";
 no halos or crunch seen on any side. Single-frame judgment (no motion/flicker). Mike's verdicts pending.
+
+### Re-detail on SOFT (upscaled) input — the real use case (2026-09-08, 8h autonomous)
+Motivation: on native-sharp H3 the net is near-invisible because there is nothing to recover. The real
+pipeline is upscale-for-delivery (which softens) then re-detail. Test: degrade a native frame (down 2x /
+up 2x, same size, native = ground truth), re-detail, measure fidelity to truth. LPIPS/DISTS = perceptual
+fidelity (lower = closer to truth = RECOVERING; higher than soft = INVENTING). MUSIQ = sharpness (native ceiling).
+
+barista GT-soft (lpips 0.046 / dists 0.027 / musiq 52; native musiq 61):
+| render | psnr | musiq | lpips | dists | read |
+|---|---|---|---|---|---|
+| crisp d1 | 37.2 | 59.2 | 0.032 | 0.019 | RECOVERS (both better) |
+| crisp d2 | 33.2 | 62.2 | 0.047 | 0.025 | break-even fidelity, native sharpness |
+| crisp d3 | 30.2 | 63.6 | 0.075 | 0.041 | INVENTS (fidelity worse than soft) |
+| final d1 | 38.3 | 57.0 | 0.034 | 0.021 | RECOVERS, most faithful |
+| final d2 | 36.0 | 60.0 | 0.037 | 0.022 | RECOVERS, balanced |
+| v2 d2 | 32.9 | 61.6 | 0.055 | 0.032 | invents already |
+| stock d2 | 31.0 | 50.1 | 0.056 | 0.025 | USELESS — not even sharper than soft |
+| crisp d2 NO mask | 32.3 | 63.8 | 0.058 | 0.031 | worse fidelity than masked (bg invention) |
+
+Generalization (crisp d1 / final d1 recover on every face; d2 inverts on portraits):
+| face | soft lpips | final d1 | crisp d1 | crisp d2 |
+|---|---|---|---|---|
+| barista | 0.046 | - | 0.032 ✓ | 0.047 |
+| first | 0.027 | 0.021 ✓ | 0.022 ✓ | 0.044 ✗ |
+| marcus | 0.037 | 0.033 ✓ | 0.037 = | 0.088 ✗ |
+| gym | 0.043 | 0.031 ✓ | 0.039 ✓ | 0.081 ✗ |
+
+VERDICT:
+- The FINE-TUNE is essential; STOCK DLSS weights do not re-detail soft input (musiq 50 < soft 52). This is the
+  single most important finding: the recovered net alone is inert here, the fine-tuning is the product.
+- **Default = detail 1**, not 2. detail 2 invents on normal-softness input (only break-even on very mushy).
+  detail 3 always invents. The old detail-2 default was set on already-sharp native stills (wrong basis).
+- **final_d1 = safest** (best lpips/dists every face, +5-7 musiq). **crisp_d1 = sharper recover** (+8-11 musiq,
+  dists always improves). Pick final for fidelity, crisp for punch. Both at detail 1.
+- Skin mask improves fidelity (keeps invention off the background); the detail split is still global so some
+  background change remains (crawl source in video — see flicker section).
+- Video (barista soft2x, crisp d2, temporal, hp 0.5): sharpness 15->43 (2.9x), relative temporal stability
+  preserved (jitter/mean 4.0% soft vs 4.2% redetail). Face stable; background brick gains speckle that crawls.
+
+### Mild (1.5x) softness — detail 1 confirmed across softness levels (2026-09-08)
+Same GT test at realistic 1.5x delivery softness (soft input already near native, lpips 0.012-0.017):
+| face | soft lpips | crisp d1 | crisp d2 |
+|---|---|---|---|
+| barista | 0.016 | 0.019 (topiq 0.393->0.429, musiq +4) | 0.041 ✗ |
+| marcus | 0.012 | 0.033 (topiq 0.389->0.423, musiq +7) | 0.086 ✗ |
+| gym | 0.017 | 0.032 (topiq 0.434->0.481, musiq +6) | 0.077 ✗ |
+Read: the fidelity payoff scales with detail actually lost. Big upscale (2x+) = real recovery (lpips drops).
+Mild (1.5x) = perceptual sharpening (topiq/musiq toward native) at a tiny lpips cost (~0.003-0.02). detail 1 is
+the safe universal default at every softness; detail 2 invents everywhere. CHANGE APPLIED: node UPSCALE
+detail_strength default 2.0 -> 1.0 (nodes.py:256) + README recipe detail 2 -> 1; the "1 is barely visible"
+claim was measured on already-sharp native H3, false on soft/upscaled input.
+
+### Video flicker — NOT a problem (2026-09-08)
+barista soft2x, crisp d1, temporal, 24-frame variants; crawl = mean |high-pass frame delta| on a static crop:
+| setting | BG crawl | FACE crawl |
+|---|---|---|
+| soft input (baseline) | 2.61 | 4.92 |
+| hp0 fresh (vendor) | 3.51 | 7.05 |
+| hp0.5 fresh (current default) | 3.30 | 6.76 |
+| hp0.5 advected | 3.29 | 6.75 |
+| hp0.7 advected | 3.21 | 6.64 |
+Relative crawl (crawl/sharpness) is LOWER for re-detail than for the soft source: BG 12.2% vs 16.0%, FACE
+6.5% vs 9.2%. The temporal stabiliser (optical-flow history + hp_history) keeps added detail proportionally
+steadier than the input. Absolute crawl rose only because there is ~2x more detail. noise-mode barely matters
+(fresh~=advected); hp 0.5->0.7 trims ~9%. Best practice: --temporal --hp-history 0.5-0.7 --noise-mode advected,
+but it is a marginal effect, not a required fix. Background speckle seen in a 100% still strip is the added
+detail, not runaway flicker.
+
+## RECOMMENDATION (verified, 2026-09-08)
+Pipeline: upscale (Lanczos 1.5x, or Thera) -> net re-detail at **detail 1**, weights **final** (safest) or
+**crisp** (sharper), --auto-mask skin, --temporal --hp-history 0.5. Value is highest on 2x+ upscales. The
+fine-tune is the product; stock weights are inert on soft input. Face-safe: recovers real detail, does not
+invent (unlike a synth upscaler) as long as detail <= 1.
+
+### Value by upscale factor (barista, crisp d1, 2026-09-08)
+| upscale | soft lpips | redetail lpips | fidelity gain | soft musiq | redetail musiq |
+|---|---|---|---|---|---|
+| 1.5x | 0.016 | 0.019 | -17% (cost) | 58.1 | 62.5 |
+| 2.0x | 0.046 | 0.032 | +30% | 51.6 | 59.2 |
+| 3.0x | 0.122 | 0.075 | +39% | 37.0 | 50.2 |
+Break-even ~1.5-1.7x: below = cosmetic sharpening (tiny fidelity cost), above = genuine recovery growing
+with the factor. Use the net whenever the upscale is >=2x; at 1.5x it is a perceptual polish, not recovery.
+
+### CORRECTION (2026-09-08) — it SYNTHESISES texture, does not recover it
+Earlier "recovers real detail, not inventing" was WRONG (based on LPIPS/DISTS moving toward truth, which
+only means plausible texture reads as more natural than mush — NOT reconstruction). Decisive test:
+correlate the detail the net ADDS with the detail truly LOST (native vs down/up-soft, rain_native frame):
+correlation = 0.27 at BOTH detail 1 and detail 2 → only ~27% of added detail aligns with real structure,
+**~73% is invented**. Detail strength changes the AMOUNT of invented texture, not the invented fraction.
+Visual (invention_proof.png): native forehead has fine soft pores; d1/d2 paint a coarser, different pore
+pattern (d2 bumpier than reality). Same class as LTX-2.5 (which Mike rejects on faces). Fundamental limit:
+real DLSS recovers true detail from temporal accumulation of real subpixel samples; generated video has
+none, so a single-frame pass can only hallucinate plausible texture. Mike caught this by eye; the LPIPS
+metric masked it. Net-as-redetail is a plausible-texture synthesiser, honest positioning required.
+
+### Confirmed on a FRESH clean H3 T2V clip (2026-09-08)
+Hypothesis: the invention was because the rain test clip was old/weird. Tested by generating a fresh clean
+H3 T2V clip locally (h3_local_turbo.py, Parasyte turbo, kitchen close-up, 608x1056) and running the same
+GT-degrade + correlation test: added-vs-true-lost correlation = 0.28 (d1) / 0.28 (d2) — IDENTICAL to the
+rain clip's 0.27. Clean input changes nothing; ~72% of added texture is invented regardless. On this clip's
+SMOOTH native skin, d2 visibly paints pore/grain texture the real frame does not have. The finding is
+fundamental to single-frame re-detail, not an artifact of the input.

@@ -18,7 +18,7 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser("convert", help="enhance every frame of a video")
     run.add_argument("input", type=Path); run.add_argument("output", type=Path)
-    run.add_argument("--weights", type=Path, help="logical safetensors (from mlxdlss-weights); required for --backend torch")
+    run.add_argument("--weights", type=Path, help="logical safetensors (from mlxdlss-weights); omit to auto-resolve (MLXDLSS_WEIGHTS / weights dir / MLXDLSS_HF_REPO)")
     run.add_argument("--backend", default="torch", choices=("torch", "mlxdlss"), help="'mlxdlss' streams frames through the Swift Metal runtime (macOS)")
     run.add_argument("--model", type=Path, help="MODEL.dlssmodel for --backend mlxdlss")
     run.add_argument("--mlxdlss", default=None, help="path to the mlxdlss binary (default: PATH or the repository build)")
@@ -33,6 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--start-frame", type=int, default=0); run.add_argument("--frames", type=int, default=None, help="stop after this many frames")
     run.add_argument("--batch", type=int, default=1, help="frames per network call (GPU devices)")
     run.add_argument("--pix-fmt", default="rgb24", choices=tuple(PIXEL_FORMATS), help="frame exchange format; rgb48le keeps 16-bit sources")
+    run.add_argument("--scale", type=float, default=1.0, help="upscale factor (1.0-4.0) applied before re-detail via a Lanczos pre-pass; 1.5 is the sweet spot, 1.0 = no upscale. Runs first, through an 8-bit intermediate, so pair it with --decode-args on the source not the upscaled frames; for &gt;8-bit or bespoke encodes, upscale separately and omit --scale")
     run.add_argument("--decode-args", default="", help="extra FFmpeg input options, quoted, e.g. \"-vf scale=1280:-2\"")
     run.add_argument("--encode-args", default=None, help=f"FFmpeg output options replacing the default: {' '.join(DEFAULT_ENCODE_ARGS)}")
     run.add_argument("--temporal", action="store_true", help="temporal mode: reprojected history + learned blend (native scale)")
@@ -102,9 +103,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         pipeline = None
         if args.backend == "torch":
-            if args.weights is None:
-                raise VideoToolError("--weights is required for --backend torch")
-            pipeline = NeuralRenderingPipeline.from_safetensors(args.weights, device=args.device, precision=args.precision)
+            from .weights import resolve_weights
+
+            pipeline = NeuralRenderingPipeline.from_safetensors(resolve_weights(args.weights), device=args.device, precision=args.precision)
         elif args.model is None:
             raise VideoToolError("--model MODEL.dlssmodel is required for --backend mlxdlss")
         options = ConvertOptions(
@@ -118,7 +119,32 @@ def main(argv: list[str] | None = None) -> int:
             enhance={"profile": args.profile, "processing_scale": args.processing_scale, "detail_strength": args.detail_strength,
                      "colour_strength": args.colour_strength, "detail_radius": args.detail_radius, "intensity": args.intensity, "degrid": not args.no_degrid},
         )
-        result = convert(args.input, args.output, pipeline, options, ffmpeg=args.ffmpeg, ffprobe=args.ffprobe)
+        import math
+
+        if args.scale != 1.0 and not (math.isfinite(args.scale) and 1.0 <= args.scale <= 4.0):
+            raise VideoToolError("--scale must be between 1.0 and 4.0")
+        import shutil
+        import tempfile
+
+        source, scratch = args.input, None
+        try:
+            if args.scale != 1.0:
+                from .video import find_tool
+
+                scratch = Path(tempfile.mkdtemp(prefix="mlxdlss-scale-"))
+                source = scratch / "upscaled.mp4"
+                # trunc to even dimensions so libx264/yuv420p accepts odd-sized sources
+                vf = f"scale=trunc(iw*{args.scale}/2)*2:trunc(ih*{args.scale}/2)*2:flags=lanczos"
+                try:
+                    subprocess.run([find_tool("ffmpeg", args.ffmpeg), "-hide_banner", "-loglevel", "error", "-y",
+                                    "-i", str(args.input), "-map", "0:v:0", "-map", "0:a?", "-vf", vf,
+                                    "-c:v", "libx264", "-crf", "12", "-pix_fmt", "yuv420p", "-c:a", "copy", str(source)], check=True)
+                except (OSError, subprocess.CalledProcessError) as exc:
+                    raise VideoToolError(f"pre-upscale (--scale {args.scale}) failed: {exc}") from exc
+            result = convert(source, args.output, pipeline, options, ffmpeg=args.ffmpeg, ffprobe=args.ffprobe)
+        finally:
+            if scratch is not None:
+                shutil.rmtree(scratch, ignore_errors=True)
         where = f"{pipeline.device}" if pipeline is not None else "mlxdlss metal"
         print(f"wrote {result.output} ({result.frames} frames, {result.width}x{result.height}, {result.frames / result.seconds if result.seconds else 0:.2f} fps on {where}{', temporal, scene cuts ' + str(result.scene_cuts) if args.temporal else ''})")
         return 0

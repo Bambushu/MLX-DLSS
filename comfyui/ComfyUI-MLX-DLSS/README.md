@@ -25,7 +25,7 @@ Weights: `mlxdlss-weights all nvngx_dlssnr.dll weights/` and `mlxdlss-weights ex
 | MLX-DLSS Load Frame Generator | weights, device, precision | FRAMEGEN | |
 | MLX-DLSS Frame Generation | FRAMEGEN, IMAGE batch, factor, scene_cut, batch | IMAGE, INT scene_cuts | `factor - 1` frames between each pair; pairs whose luma change exceeds `scene_cut` are held as a hard cut. Set the downstream frame rate to fps × factor for smooth motion, or keep it for slow motion |
 
-`example_workflows/`: `mlxdlss_image_upscale_1.5x.json` (LoadImage → Image Upscale 1.5x with the v2 fine-tune → SaveImage), `mlxdlss_still_krea2_recipe.json` (LoadImage → renderer → SaveImage +
+`example_workflows/`: `mlxdlss_video_upscale.json` (VHS_LoadVideo → Video Upscale 2x + re-detail with the v2 fine-tune → VHS_VideoCombine — the friendly one-node video path) — the video examples need the third-party VideoHelperSuite (VHS) pack; the shipped graph forces 24 fps to stay A/V-synced, raise `frame_rate` on both VHS nodes to match a faster source, `mlxdlss_image_upscale_1.5x.json` (LoadImage → Image Upscale 1.5x with the v2 fine-tune → SaveImage), `mlxdlss_still_krea2_recipe.json` (LoadImage → renderer → SaveImage +
 mask preview) and `mlxdlss_framegen_x2_video.json` (VHS_LoadVideo → frame gen ×2 →
 VHS_VideoCombine at 48 fps, audio passed through). The video one needs
 ComfyUI-VideoHelperSuite.
