@@ -6,7 +6,7 @@ from mlxdlss.weights import resolve_weights
 
 @pytest.fixture(autouse=True)
 def _no_hub(monkeypatch):
-    monkeypatch.delenv("MLXDLSS_HF_REPO", raising=False)
+    monkeypatch.setenv("MLXDLSS_HF_REPO", "")  # empty disables the hub fallback (tests stay offline)
 
 
 def test_explicit_absolute_path(tmp_path):

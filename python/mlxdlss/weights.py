@@ -1,10 +1,10 @@
 """Resolve a weights file from an explicit path, a local directory, or the Hugging Face hub.
 
 Lets the CLIs and nodes run without a hand-typed ``--weights`` path: a bare name (or nothing) is
-resolved against ``MLXDLSS_WEIGHTS`` / the repo ``weights/`` dir, and only downloaded from the hub as
-a last resort. Auto-download needs the weights to be published at ``MLXDLSS_HF_REPO``; until they are,
-the error explains exactly what to do. An explicit path with directory components must exist as given
-(no silent basename fallback), so a typo fails loudly instead of loading the wrong file or hitting the hub.
+resolved against ``MLXDLSS_WEIGHTS`` / the repo ``weights/`` dir, and, as a last resort, auto-downloaded
+from the public hub repo ``DEFAULT_HF_REPO`` (override with ``MLXDLSS_HF_REPO``; set it to ``""`` to
+disable the hub fallback). An explicit path with directory components must exist as given (no silent
+basename fallback), so a typo fails loudly instead of loading the wrong file or hitting the hub.
 """
 from __future__ import annotations
 
@@ -14,6 +14,10 @@ from pathlib import Path
 # The default weights when the caller does not name one. A fine-tune, not the stock renderer:
 # on soft/upscaled video the stock weights are inert (see docs/super-resolution.md).
 DEFAULT_NAME = "dlssnr-ft-real-v2.safetensors"
+
+# Public hub repo the fine-tune weights auto-download from when they are not found locally.
+# Override with MLXDLSS_HF_REPO (set it to "" to disable the hub fallback entirely).
+DEFAULT_HF_REPO = "bambushu/neural-re-detailer"
 
 
 def _search_dirs() -> list[Path]:
@@ -55,7 +59,7 @@ def resolve_weights(explicit: str | os.PathLike | None = None, name: str = DEFAU
         if hit.is_file():
             return hit.resolve()
 
-    hf_repo = os.environ.get("MLXDLSS_HF_REPO", "")  # read at call time, not import time
+    hf_repo = os.environ.get("MLXDLSS_HF_REPO", DEFAULT_HF_REPO)  # read at call time; env "" disables
     if hf_repo:
         try:
             from huggingface_hub import hf_hub_download
