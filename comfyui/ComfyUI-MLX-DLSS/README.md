@@ -2,7 +2,7 @@
 
 The DLSS neural renderer and frame generator as ComfyUI nodes (category `MLX-DLSS`).
 
-> **Not magic.** The DLSSDetailer upscale/re-detail is a minor detailer: it does not invent objects or change
+> **Not magic.** The Neural Re-Detailer (tagline: *DLSSDetailer*) upscale/re-detail is a minor detailer: it does not invent objects or change
 > the subject, it adds a small, measured amount of crispness. The fine texture is *mostly synthesised* (only
 > ~30% aligns with the true detail), so enhancement, not reconstruction — a light finishing pass, most useful
 > on soft/upscaled video.

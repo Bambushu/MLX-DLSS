@@ -356,8 +356,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MLXDLSSLoadRenderer": "MLX-DLSS Load Neural Renderer",
     "MLXDLSSNeuralRendering": "MLX-DLSS Neural Rendering (detail + tone)",
     "MLXDLSSNeuralRenderingMetal": "MLX-DLSS Neural Rendering VIDEO (Metal, temporal)",
-    "MLXDLSSImageUpscale": "DLSSDetailer — Image Upscale (resample + re-detail)",
-    "MLXDLSSVideoUpscale": "DLSSDetailer — Video Upscale (resample + re-detail, temporal)",
+    "MLXDLSSImageUpscale": "Neural Re-Detailer — Image Upscale (resample + re-detail)",
+    "MLXDLSSVideoUpscale": "Neural Re-Detailer — Video Upscale (resample + re-detail, temporal)",
     "MLXDLSSLoadFrameGen": "MLX-DLSS Load Frame Generator",
     "MLXDLSSFrameGeneration": "MLX-DLSS Frame Generation (interpolate)",
 }
